@@ -1,12 +1,30 @@
-name: Deploy to EC2
+name: Test & Deploy
 
 on:
   push:
     branches: [master]
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install server dependencies
+        run: cd server && npm install
+
+      - name: Run GameEngine unit tests
+        run: node --test server/src/GameEngine.test.js
+
   deploy:
     runs-on: ubuntu-latest
+    needs: [test]
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
