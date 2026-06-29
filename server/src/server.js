@@ -331,7 +331,7 @@ io.on('connection', (socket) => {
         });
 
         // Clear turn timer
-        gameManager.clearTurnTimer(roomId);
+        gameManager.clearTurnTimer(room.id);
 
         // Check if game should end
         if (room.phase === 'playing') {
