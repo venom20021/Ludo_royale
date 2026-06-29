@@ -212,7 +212,7 @@ export default function Board({
   };
 
   const getTrackCellColor = (pos) => {
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < players.length; i++) {
       const start = START_POS[i];
       const end = (start + 2) % TRACK_SIZE;
       if (pos === start || pos === (start + 1) % TRACK_SIZE || pos === (start + 2) % TRACK_SIZE) {
@@ -239,7 +239,7 @@ export default function Board({
 
   // Check if a track cell belongs to a player's starting zone (3 exit cells)
   const getPlayerZoneIndex = (pos) => {
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < players.length; i++) {
       const start = START_POS[i];
       const end = (start + 2) % TRACK_SIZE;
       if (pos === start || pos === (start + 1) % TRACK_SIZE || pos === (start + 2) % TRACK_SIZE) {

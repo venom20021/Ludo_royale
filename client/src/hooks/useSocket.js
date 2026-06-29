@@ -45,7 +45,7 @@ export default function useSocket() {
       setConnected(false);
     });
 
-    // Room joined — update store data but DON'T navigate (App.jsx handles navigation)
+    // Room joined — update store data and navigate to lobby if on home screen
     s.on('room_joined', (data) => {
       setPlayerIndex(data.playerIndex);
       if (data.room?.gameState?.players?.[data.playerIndex]) {
@@ -53,6 +53,11 @@ export default function useSocket() {
       }
       setRoomId(data.roomId);
       setRoom(data.room);
+      // Navigate to lobby if we're still on the home screen (e.g., joined via Private Room)
+      const store = useGameStore.getState();
+      if (store.activeScreen === 'home') {
+        store.setActiveScreen('lobby');
+      }
     });
 
     // Room update (from server's room_update) — when another player joins/leaves
@@ -83,7 +88,10 @@ export default function useSocket() {
 
     // Player disconnected
     s.on('player_disconnected', (data) => {
-      setRoom(data.room);
+      // room_update event carries the actual room data; this is just a notification
+      if (data.room) {
+        setRoom(data.room);
+      }
     });
 
     // Player reaction
@@ -122,8 +130,8 @@ export default function useSocket() {
   }, []);
 
   // Actions
-  const createRoom = useCallback((playerName, maxPlayers = 6) => {
-    socketRef.current?.emit('create_room', { playerName, maxPlayers });
+  const createRoom = useCallback((playerName, maxPlayers = 6, gameMode = 'classic') => {
+    socketRef.current?.emit('create_room', { playerName, maxPlayers, gameMode });
   }, []);
 
   const joinRoom = useCallback((roomId, playerName) => {
@@ -148,6 +156,10 @@ export default function useSocket() {
     socketRef.current?.emit('move_token', { tokenIdx });
   }, []);
 
+  const setGameMode = useCallback((gameMode) => {
+    socketRef.current?.emit('set_game_mode', { gameMode });
+  }, []);
+
   const sendMessage = useCallback((message) => {
     if (message.trim() && roomId) {
       socketRef.current?.emit('chat_message', { roomId, message: message.trim() });
@@ -168,6 +180,7 @@ export default function useSocket() {
     startGame,
     rollDice,
     moveToken,
+    setGameMode,
     sendMessage,
     sendReaction,
   };

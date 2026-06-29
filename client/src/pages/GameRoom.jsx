@@ -299,16 +299,48 @@ export default function GameRoom({ socket, onLeave }) {
           </div>
         </div>
 
-        {/* Player Cards */}
-        {players.map((p, i) => (
-          <PlayerCard
-            key={i}
-            player={p}
-            playerIndex={i}
-            currentPlayerIndex={room?.gameState?.currentPlayerIndex}
-            totalPlayers={players.length}
-          />
-        ))}
+        {/* Player Cards — positioned cards for 2-4 players, compact strip for 5-6 */}
+        {players.length <= 4 ? (
+          players.map((p, i) => (
+            <PlayerCard
+              key={i}
+              player={p}
+              playerIndex={i}
+              currentPlayerIndex={room?.gameState?.currentPlayerIndex}
+              totalPlayers={players.length}
+            />
+          ))
+        ) : (
+          <div className="px-3 py-1.5 flex gap-1.5 overflow-x-auto">
+            {players.map((p, i) => {
+              const isCurrent = i === room?.gameState?.currentPlayerIndex;
+              const color = p.color;
+              const finishedCount = p.tokens.filter(t => tokenIsFinished(t, i)).length;
+              return (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.06 }}
+                  className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-all duration-300
+                    ${isCurrent ? 'border' : 'border border-white/5 opacity-70'}`}
+                  style={{
+                    background: isCurrent ? `${color}18` : 'rgba(255,255,255,0.03)',
+                    borderColor: isCurrent ? `${color}44` : undefined,
+                  }}
+                >
+                  <span className="text-xs">{p.emoji}</span>
+                  <span className="text-[10px] font-bold text-white truncate max-w-[40px]">{p.name}</span>
+                  <span className="text-[9px] text-white/40">🏆{finishedCount}/4</span>
+                  {p.connected === false && <span className="text-[9px]">❌</span>}
+                  {isCurrent && (
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: color, boxShadow: `0 0 6px ${color}` }} />
+                  )}
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Board */}
         <div className="flex-1 flex flex-col items-center justify-center px-3 py-2">

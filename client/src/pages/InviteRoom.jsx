@@ -5,7 +5,7 @@ import Card from '../components/ui/Card.jsx';
 import useGameStore from '../stores/gameStore.js';
 import { PLAYER_COLORS, PLAYER_EMOJIS } from '../constants.js';
 
-export default function InviteRoom({ onBack, onStartGame }) {
+export default function InviteRoom({ onBack, onStartGame, onSetGameMode }) {
   const { room, playerIndex } = useGameStore();
   const players = room?.gameState?.players || [];
   const isHost = playerIndex === 0;
@@ -68,18 +68,45 @@ export default function InviteRoom({ onBack, onStartGame }) {
       <Card className="mb-6">
         <p className="text-xs text-white/40 font-bold uppercase tracking-wider mb-3">Game Mode</p>
         <div className="flex gap-2">
-          {['Classic', 'Quick'].map((mode) => (
-            <button
-              key={mode}
-              className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition-all duration-200
-                ${mode === 'Classic'
-                  ? 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 shadow-[0_0_15px_rgba(241,196,15,0.1)]'
-                  : 'bg-white/5 text-white/40 border border-white/10'}`}
-            >
-              {mode === 'Classic' ? '🎲' : '⚡'} {mode}
-            </button>
-          ))}
+          {['Classic', 'Quick'].map((mode) => {
+            const modeKey = mode.toLowerCase();
+            const isSelected = (room?.gameMode || 'classic') === modeKey;
+            const canChange = isHost && room?.phase === 'lobby';
+            return (
+              <button
+                key={mode}
+                disabled={!canChange}
+                onClick={() => canChange && onSetGameMode?.(modeKey)}
+                className={`flex-1 py-3 px-4 rounded-xl font-bold text-sm transition-all duration-200
+                  ${isSelected
+                    ? modeKey === 'quick'
+                      ? 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-300 border border-purple-500/30 shadow-[0_0_15px_rgba(147,51,234,0.15)]'
+                      : 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 shadow-[0_0_15px_rgba(241,196,15,0.1)]'
+                    : 'bg-white/5 text-white/40 border border-white/10 hover:bg-white/10 hover:text-white/60'}
+                  ${!canChange ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className="flex flex-col items-center gap-0.5">
+                  <span className="text-lg">{mode === 'Classic' ? '🎲' : '⚡'}</span>
+                  <span>{mode}</span>
+                  {modeKey === 'quick' && (
+                    <span className="text-[9px] font-semibold opacity-60">3 tokens to win</span>
+                  )}
+                  {modeKey === 'classic' && (
+                    <span className="text-[9px] font-semibold opacity-60">4 tokens to win</span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
         </div>
+        {isHost && room?.phase === 'lobby' && (
+          <p className="text-xs text-white/30 font-semibold mt-2 text-center">
+            {room?.gameMode === 'quick'
+              ? '⚡ Quick mode: First to get 3 tokens home wins!'
+              : '🎲 Classic mode: First to get all 4 tokens home wins!'
+            }
+          </p>
+        )}
       </Card>
 
       {/* Max Players - Improved visibility */}

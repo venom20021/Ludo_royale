@@ -11,9 +11,9 @@ export default function App() {
   const socket = useSocket();
   const { activeScreen, setActiveScreen, setUsername, username, reset } = useGameStore();
 
-  const handleCreateRoom = useCallback((playerName, maxPlayers) => {
+  const handleCreateRoom = useCallback((playerName, maxPlayers, gameMode) => {
     setUsername(playerName);
-    socket.createRoom(playerName, maxPlayers);
+    socket.createRoom(playerName, maxPlayers, gameMode);
     setActiveScreen('lobby');
   }, [socket, setUsername, setActiveScreen]);
 
@@ -29,6 +29,10 @@ export default function App() {
 
   const handleStartGame = useCallback(() => {
     socket.startGame();
+  }, [socket]);
+
+  const handleSetGameMode = useCallback((gameMode) => {
+    socket.setGameMode(gameMode);
   }, [socket]);
 
   // Listen for game_started to navigate from lobby to game
@@ -60,6 +64,7 @@ export default function App() {
             key="lobby"
             onBack={handleLeaveGame}
             onStartGame={handleStartGame}
+            onSetGameMode={handleSetGameMode}
           />
         )}
         {activeScreen === 'game' && (

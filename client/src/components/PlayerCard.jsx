@@ -1,15 +1,18 @@
 import { motion } from 'framer-motion';
 import { TOKENS_PER_PLAYER, tokenIsFinished } from '../constants.js';
 
-const POSITIONS = [
-  { top: 60, left: 8 },
-  { top: 60, right: 8 },
-  { bottom: 90, left: 8 },
-  { bottom: 90, right: 8 },
-];
-
 export default function PlayerCard({ player, playerIndex, currentPlayerIndex, totalPlayers }) {
-  if (totalPlayers > 4) return null;
+  // For 5-6 players, the GameRoom renders a compact horizontal strip instead
+  if (totalPlayers >= 5) {
+    return null;
+  }
+
+  const POSITIONS = [
+    { top: 60, left: 8 },
+    { top: 60, right: 8 },
+    { bottom: 90, left: 8 },
+    { bottom: 90, right: 8 },
+  ];
 
   const pos = POSITIONS[playerIndex];
   if (!pos) return null;

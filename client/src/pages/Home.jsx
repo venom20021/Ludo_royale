@@ -125,7 +125,7 @@ export default function Home({ onCreateRoom, onJoinRoom }) {
             whileTap={{ scale: 0.98 }}
             onClick={() => {
               useGameStore.getState().setUsername(username || 'Player');
-              onCreateRoom(username || 'Player', 4);
+              onCreateRoom(username || 'Player', 2, 'quick');
             }}
             className="w-full py-4 rounded-2xl font-bold text-white text-lg font-body tracking-wide
               bg-gradient-to-r from-yellow-400 via-yellow-500 to-orange-500
@@ -143,7 +143,7 @@ export default function Home({ onCreateRoom, onJoinRoom }) {
             whileTap={{ scale: 0.98 }}
             onClick={() => {
               useGameStore.getState().setUsername(username || 'Player');
-              onCreateRoom(username || 'Player', 4);
+              onCreateRoom(username || 'Player', 4, 'classic');
             }}
             className="w-full py-4 rounded-2xl font-bold text-white text-lg font-body tracking-wide
               bg-gradient-to-r from-blue-600 to-purple-600

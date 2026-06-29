@@ -24,14 +24,15 @@ class GameManager {
     this.onTurnTimeout = null; // callback(roomId) called when auto-action happens
   }
 
-  createRoom(hostSocketId, hostName, maxPlayers = 6) {
+  createRoom(hostSocketId, hostName, maxPlayers = 6, gameMode = 'classic') {
     const roomId = uuidv4().slice(0, 8).toUpperCase();
-    const gameState = createInitialState();
+    const gameState = createInitialState(gameMode);
 
     const room = {
       id: roomId,
       hostSocketId,
       maxPlayers,
+      gameMode,
       gameState,
       phase: 'lobby', // 'lobby', 'playing', 'finished'
       createdAt: Date.now(),
@@ -120,6 +121,7 @@ class GameManager {
 
     room.phase = 'playing';
     room.gameState.phase = 'playing';
+    room.gameState.gameMode = room.gameMode;
     room.gameState.currentPlayerIndex = 0;
     room.gameState.turnNumber = 1;
     room.gameState.turnPhase = 'roll';
@@ -221,6 +223,17 @@ class GameManager {
     if (this.onTurnTimeout) {
       this.onTurnTimeout(roomId);
     }
+  }
+
+  setGameMode(roomId, socketId, gameMode) {
+    const room = this.rooms.get(roomId);
+    if (!room) return { success: false, error: 'Room not found.' };
+    if (room.phase !== 'lobby') return { success: false, error: 'Cannot change mode after game starts.' };
+    if (room.hostSocketId !== socketId) return { success: false, error: 'Only the host can change game mode.' };
+    if (gameMode !== 'classic' && gameMode !== 'quick') return { success: false, error: 'Invalid game mode.' };
+
+    room.gameMode = gameMode;
+    return { success: true, room };
   }
 
   getRoom(roomId) {

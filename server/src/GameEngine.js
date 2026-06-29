@@ -43,7 +43,7 @@ function forwardDistance(from, to) {
 }
 
 // --- Initial State ---
-export function createInitialState() {
+export function createInitialState(gameMode = 'classic') {
   return {
     players: [],
     currentPlayerIndex: 0,
@@ -55,6 +55,7 @@ export function createInitialState() {
     turnStartTime: null, // Date.now() when current turn phase started
     log: [],
     turnNumber: 0,
+    gameMode, // 'classic' (4 tokens to win) or 'quick' (3 tokens to win)
   };
 }
 
@@ -313,9 +314,10 @@ export function moveToken(state, playerIdx, tokenIdx) {
       newPlayer.tokens[tokenIdx] = TOKEN_FINISHED_BASE + playerIdx;
       moveDescription = `Token ${tokenIdx + 1} reached home! 🎉`;
 
-      // Check if all tokens finished
-      const allFinished = newPlayer.tokens.every(p => isFinished(p, playerIdx));
-      if (allFinished) {
+      // Check if enough tokens finished (4 for classic, 3 for quick)
+      const finishedCount = newPlayer.tokens.filter(p => isFinished(p, playerIdx)).length;
+      const tokensToWin = newState.gameMode === 'quick' ? 3 : 4;
+      if (finishedCount >= tokensToWin) {
         newPlayer.finished = true;
         if (!newState.winner) {
           newState.winner = playerIdx;

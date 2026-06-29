@@ -86,9 +86,9 @@ io.on('connection', (socket) => {
   console.log(`🔗 Client connected: ${socket.id}`);
 
   // --- Create Room ---
-  socket.on('create_room', ({ playerName, maxPlayers } = {}) => {
+  socket.on('create_room', ({ playerName, maxPlayers, gameMode } = {}) => {
     try {
-      const roomId = gameManager.createRoom(socket.id, playerName, maxPlayers || 6);
+      const roomId = gameManager.createRoom(socket.id, playerName, maxPlayers || 6, gameMode || 'classic');
       const result = gameManager.joinRoom(roomId, socket.id, playerName || 'Host');
 
       if (!result.success) {
@@ -151,6 +151,68 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('Error joining room:', err);
       socket.emit('error', { message: 'Failed to join room.' });
+    }
+  });
+
+  // --- Set Game Mode ---
+  socket.on('set_game_mode', ({ gameMode } = {}) => {
+    try {
+      const roomId = gameManager.getPlayerRoom(socket.id);
+      if (!roomId) {
+        socket.emit('error', { message: 'You are not in a room.' });
+        return;
+      }
+
+      const result = gameManager.setGameMode(roomId, socket.id, gameMode);
+      if (!result.success) {
+        socket.emit('error', { message: result.error });
+        return;
+      }
+
+      const room = gameManager.getRoom(roomId);
+      io.to(roomId).emit('room_update', { room: sanitizeRoom(room) });
+      console.log(`🎮 Game mode changed to ${gameMode} in room ${roomId}`);
+    } catch (err) {
+      console.error('Error setting game mode:', err);
+      socket.emit('error', { message: 'Failed to set game mode.' });
+    }
+  });
+
+  // --- Leave Room ---
+  socket.on('leave_room', () => {
+    try {
+      const roomId = gameManager.getPlayerRoom(socket.id);
+      if (!roomId) {
+        socket.emit('error', { message: 'You are not in a room.' });
+        return;
+      }
+
+      const room = gameManager.leaveRoom(socket.id);
+      socket.leave(roomId);
+
+      if (room) {
+        const sanitized = sanitizeRoom(room);
+        io.to(roomId).emit('room_update', { room: sanitized });
+        gameManager.clearTurnTimer(roomId);
+
+        // Check if game should end
+        if (room.phase === 'playing') {
+          const connectedPlayers = room.gameState.players.filter(p => p.connected);
+          if (connectedPlayers.length < 2) {
+            room.phase = 'finished';
+            room.gameState.phase = 'finished';
+            io.to(room.id).emit('game_over', {
+              room: sanitized,
+              reason: 'Not enough players.',
+            });
+          }
+        }
+      }
+
+      console.log(`🚪 ${socket.id} left room ${roomId}`);
+    } catch (err) {
+      console.error('Error leaving room:', err);
+      socket.emit('error', { message: 'Failed to leave room.' });
     }
   });
 
@@ -424,6 +486,7 @@ function sanitizeRoom(room) {
     id: room.id,
     phase: room.phase,
     maxPlayers: room.maxPlayers,
+    gameMode: room.gameMode,
     gameState: {
       players: room.gameState.players.map(p => ({
         id: p.id,
