@@ -288,12 +288,39 @@ io.on('connection', (socket) => {
   });
 
   // --- Send Chat Message ---
-  socket.on('send_message', ({ message } = {}) => {
+  socket.on('chat_message', ({ roomId, message } = {}) => {
     try {
       if (!message || message.trim().length === 0) return;
 
-      const roomId = gameManager.getPlayerRoom(socket.id);
-      if (!roomId) return;
+      // Allow roomId from event payload or lookup from socket
+      const chatRoomId = roomId || gameManager.getPlayerRoom(socket.id);
+      if (!chatRoomId) return;
+
+      const mapping = gameManager.socketToPlayer.get(socket.id);
+      if (!mapping) return;
+
+      const room = gameManager.getRoom(chatRoomId);
+      if (!room) return;
+
+      const player = room.gameState.players[mapping.playerIndex];
+      if (!player) return;
+
+      io.to(chatRoomId).emit('chat_message', {
+        playerName: player.name,
+        playerColor: player.color,
+        playerEmoji: player.emoji,
+        message: message.trim(),
+        timestamp: Date.now(),
+      });
+    } catch (err) {
+      console.error('Error sending message:', err);
+    }
+  });
+
+  // --- Send Reaction ---
+  socket.on('send_reaction', ({ roomId, emoji } = {}) => {
+    try {
+      if (!emoji || !roomId) return;
 
       const mapping = gameManager.socketToPlayer.get(socket.id);
       if (!mapping) return;
@@ -304,15 +331,17 @@ io.on('connection', (socket) => {
       const player = room.gameState.players[mapping.playerIndex];
       if (!player) return;
 
-      io.to(roomId).emit('chat_message', {
+      // Broadcast reaction to all players in the room (including sender)
+      io.to(roomId).emit('player_reaction', {
         playerName: player.name,
         playerColor: player.color,
         playerEmoji: player.emoji,
-        message: message.trim(),
+        playerIndex: mapping.playerIndex,
+        emoji,
         timestamp: Date.now(),
       });
     } catch (err) {
-      console.error('Error sending message:', err);
+      console.error('Error sending reaction:', err);
     }
   });
 

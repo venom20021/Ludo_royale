@@ -489,5 +489,6 @@ function checkGameEnd(state) {
 }
 
 // --- Constants used in this module ---
-const PLAYER_NAMES = ['Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Orange'];
-const PLAYER_EMOJIS = ['🔴', '🔵', '🟢', '🟡', '🟣', '🟠'];
+// Classic 4-color layout: Green (top-left), Yellow (top-right), Red (bottom-left), Blue (bottom-right)
+const PLAYER_NAMES = ['Green', 'Yellow', 'Red', 'Blue', 'Purple', 'Orange'];
+const PLAYER_EMOJIS = ['🟢', '🟡', '🔴', '🔵', '🟣', '🟠'];

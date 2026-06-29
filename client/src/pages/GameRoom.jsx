@@ -1,60 +1,41 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import Board from '../components/Board.jsx';
 import Dice from '../components/Dice.jsx';
-import PlayerPanel from '../components/PlayerPanel.jsx';
-import GameLog from '../components/GameLog.jsx';
-import { PLAYER_COLORS, TOKENS_PER_PLAYER, tokenIsHome, tokenIsOnTrack, tokenIsOnHomeStretch, tokenIsFinished } from '../constants.js';
-
-const TURN_TIMEOUT = 30; // seconds
+import GameChat from '../components/GameChat.jsx';
+import MatchTimer from '../components/MatchTimer.jsx';
+import PlayerCard from '../components/PlayerCard.jsx';
+import ResultModal from '../components/ResultModal.jsx';
+import EmojiReactionPicker, { FloatingReactions } from '../components/EmojiReactionPicker.jsx';
+import useGameStore from '../stores/gameStore.js';
+import {
+  tokenIsHome,
+  tokenIsOnTrack,
+  tokenIsOnHomeStretch,
+  tokenIsFinished,
+} from '../constants.js';
 
 export default function GameRoom({ socket, onLeave }) {
-  const { room, playerIndex, connected, error, chatMessages, sendMessage, rollDice, moveToken, startGame } = socket;
-
+  const room = useGameStore((s) => s.room);
+  const playerIndex = useGameStore((s) => s.playerIndex);
+  const connected = useGameStore((s) => s.connected);
   const [rolling, setRolling] = useState(false);
   const [selectableTokens, setSelectableTokens] = useState(null);
-  const [chatInput, setChatInput] = useState('');
+  const [showChat, setShowChat] = useState(false);
   const [showCopied, setShowCopied] = useState(false);
-  const [showPlayers, setShowPlayers] = useState(true);
-  const [showLog, setShowLog] = useState(true);
-  const chatEndRef = useRef(null);
 
-  // Scroll chat to bottom
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages]);
-
-  // Determine if it's my turn
   const isMyTurn = room?.gameState?.currentPlayerIndex === playerIndex;
   const turnPhase = room?.gameState?.turnPhase || 'roll';
   const diceValue = room?.gameState?.diceValue;
   const players = room?.gameState?.players || [];
-  const gameLog = room?.gameState?.log || [];
   const gamePhase = room?.phase || 'lobby';
   const winner = room?.gameState?.winner;
-  const isHost = playerIndex === 0; // First player is host
-
-  // Turn timer
+  const isHost = playerIndex === 0;
   const turnStartTime = room?.gameState?.turnStartTime;
-  const [remainingSeconds, setRemainingSeconds] = useState(TURN_TIMEOUT);
 
-  useEffect(() => {
-    if (!turnStartTime || gamePhase !== 'playing') {
-      setRemainingSeconds(TURN_TIMEOUT);
-      return;
-    }
+  const turnNumber = room?.gameState?.turnNumber;
 
-    const updateTimer = () => {
-      const elapsed = (Date.now() - turnStartTime) / 1000;
-      const remaining = Math.max(0, TURN_TIMEOUT - elapsed);
-      setRemainingSeconds(remaining);
-    };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 200);
-    return () => clearInterval(interval);
-  }, [turnStartTime, gamePhase, room?.gameState?.turnNumber]);
-
-  // Calculate selectable tokens when it's my turn and in move phase
+  // Valid moves
   useEffect(() => {
     if (!isMyTurn || turnPhase !== 'move' || !diceValue || !players[playerIndex]) {
       setSelectableTokens(null);
@@ -65,7 +46,6 @@ export default function GameRoom({ socket, onLeave }) {
     const validTokens = [];
     const dice = diceValue;
 
-    // Build set of positions occupied by own tokens (excluding each token being considered)
     const getSelfOccupied = (excludeIdx) => {
       const occupied = new Set();
       myTokens.forEach((p, ti) => {
@@ -77,13 +57,10 @@ export default function GameRoom({ socket, onLeave }) {
     };
 
     myTokens.forEach((pos, tIdx) => {
-      // Skip finished tokens
       if (tokenIsFinished(pos, playerIndex)) return;
-
       const selfOccupied = getSelfOccupied(tIdx);
 
       if (tokenIsHome(pos) && dice === 6) {
-        // Enter from home — check self-blocking at start position
         const startPos = [0, 10, 20, 30, 40, 50][playerIndex];
         if (!selfOccupied.has(startPos)) {
           validTokens.push({ playerIdx: playerIndex, tokenIdx: tIdx });
@@ -96,19 +73,16 @@ export default function GameRoom({ socket, onLeave }) {
         const distanceToEntry = (entry >= pos) ? entry - pos : (60 - pos + entry);
 
         if (dice < distanceToEntry) {
-          // Moving on track — check if destination blocked by own token
           const newPos = (pos + dice) % 60;
           if (!selfOccupied.has(newPos)) {
             validTokens.push({ playerIdx: playerIndex, tokenIdx: tIdx });
           }
         } else if (dice === distanceToEntry) {
-          // Entering home stretch — check if HS cell 0 is blocked
           const hsPos = 100 + playerIndex * 10;
           if (!selfOccupied.has(hsPos)) {
             validTokens.push({ playerIdx: playerIndex, tokenIdx: tIdx });
           }
         } else {
-          // Overshoot into home stretch
           const overshoot = dice - distanceToEntry;
           if (overshoot <= 6) {
             const hsPos = 100 + playerIndex * 10 + (overshoot - 1);
@@ -124,13 +98,11 @@ export default function GameRoom({ socket, onLeave }) {
         const hsIndex = pos - (100 + playerIndex * 10);
         const remaining = 6 - hsIndex;
         if (dice < remaining) {
-          // Moving on home stretch — check if destination blocked by own token
           const newHsPos = 100 + playerIndex * 10 + hsIndex + dice;
           if (!selfOccupied.has(newHsPos)) {
             validTokens.push({ playerIdx: playerIndex, tokenIdx: tIdx });
           }
         } else if (dice === remaining) {
-          // Reaching home — always valid
           validTokens.push({ playerIdx: playerIndex, tokenIdx: tIdx });
         }
         return;
@@ -143,27 +115,19 @@ export default function GameRoom({ socket, onLeave }) {
   const handleRollDice = useCallback(() => {
     if (!isMyTurn || turnPhase !== 'roll') return;
     setRolling(true);
-    rollDice();
+    if (socket.rollDice) socket.rollDice();
     setTimeout(() => setRolling(false), 700);
-  }, [isMyTurn, turnPhase, rollDice]);
+  }, [isMyTurn, turnPhase, socket]);
 
   const handleTokenClick = useCallback((pIdx, tIdx) => {
     if (!isMyTurn || turnPhase !== 'move' || pIdx !== playerIndex) return;
-    moveToken(tIdx);
+    if (socket.moveToken) socket.moveToken(tIdx);
     setSelectableTokens(null);
-  }, [isMyTurn, turnPhase, playerIndex, moveToken]);
+  }, [isMyTurn, turnPhase, playerIndex, socket]);
 
   const handleStartGame = useCallback(() => {
-    startGame();
-  }, [startGame]);
-
-  const handleChatSubmit = (e) => {
-    e.preventDefault();
-    if (chatInput.trim()) {
-      sendMessage(chatInput.trim());
-      setChatInput('');
-    }
-  };
+    if (socket.startGame) socket.startGame();
+  }, [socket]);
 
   const handleCopyRoomId = () => {
     if (room?.id) {
@@ -173,279 +137,182 @@ export default function GameRoom({ socket, onLeave }) {
     }
   };
 
-  // Winner info
   const winnerPlayer = winner !== null && winner !== undefined ? players[winner] : null;
+  const currentPlayer = players[room?.gameState?.currentPlayerIndex];
 
-  return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      flexDirection: 'column',
-      padding: 12,
-      maxWidth: 1200,
-      margin: '0 auto',
-      width: '100%',
-    }}>
-      {/* Connection bar */}
-      {!connected && (
-        <div style={{
-          padding: '8px 16px',
-          background: 'rgba(231,76,60,0.15)',
-          border: '1px solid rgba(231,76,60,0.3)',
-          borderRadius: 8,
-          marginBottom: 12,
-          fontSize: 13,
-          color: '#e74c3c',
-          textAlign: 'center',
-          fontWeight: 600,
-        }}>
-          🔴 Disconnected from server. Attempting to reconnect...
-        </div>
-      )}
-
-      {/* Error toast */}
-      {error && (
-        <div style={{
-          position: 'fixed',
-          top: 20,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          padding: '10px 24px',
-          background: 'rgba(231,76,60,0.9)',
-          borderRadius: 12,
-          color: '#fff',
-          fontSize: 14,
-          fontWeight: 600,
-          zIndex: 100,
-          animation: 'fadeIn 0.3s ease-out',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* Top bar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 12,
-        flexWrap: 'wrap',
-        gap: 8,
-      }}>
-        {/* Room info */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-        }}>
-          <button
+  // Lobby state
+  if (gamePhase === 'lobby') {
+    return (
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="min-h-screen flex flex-col relative z-10 p-5"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
             onClick={onLeave}
-            style={{
-              padding: '8px 14px',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: 8,
-              background: 'rgba(255,255,255,0.05)',
-              color: '#888',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s',
-            }}
+            className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-white/60"
           >
-            ← Leave
-          </button>
+            ←
+          </motion.button>
+          <div className="text-center">
+            <h1 className="text-xl font-display gradient-text">Ludo Royale</h1>
+          </div>
+          <div className="w-10" />
+        </div>
 
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}>
-            <span style={{ fontSize: 13, color: '#888' }}>Room:</span>
+        {/* Room Code */}
+        <div className="glass rounded-2xl p-5 text-center mb-6">
+          <p className="text-xs text-white/40 font-semibold uppercase tracking-wider mb-2">Room Code</p>
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleCopyRoomId}
+            className="text-4xl font-display text-yellow-400 tracking-[0.15em] mb-2
+              px-6 py-3 rounded-xl bg-yellow-500/5 border border-yellow-500/20
+              hover:bg-yellow-500/10 transition-all"
+          >
+            {room?.id || '------'}
+          </motion.button>
+          <p className="text-xs text-white/30">Tap to copy</p>
+        </div>
+
+        {/* Players list */}
+        <div className="glass rounded-2xl p-5 flex-1 mb-6">
+          <p className="text-xs text-white/40 font-semibold uppercase tracking-wider mb-3">
+            Players ({players.length}/{room?.maxPlayers || 4})
+          </p>
+          <div className="space-y-2.5">
+            {players.map((p, i) => {
+              const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22'];
+              const emojis = ['🔴', '🔵', '🟢', '🟡', '🟣', '🟠'];
+              return (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.08 }}
+                  className="flex items-center justify-between p-3 rounded-xl bg-white/5"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold"
+                      style={{ background: `${colors[i]}22`, border: `1px solid ${colors[i]}44` }}>
+                      {emojis[i]}
+                    </div>
+                    <p className="text-sm font-bold text-white">{p.name}</p>
+                  </div>
+                  {p.connected !== false && (
+                    <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(46,204,113,0.6)]" />
+                  )}
+                </motion.div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Start & Share */}
+        <div className="space-y-3">
+          <button
+            onClick={handleCopyRoomId}
+            className="w-full py-4 rounded-2xl font-bold text-white font-body glass border border-white/10
+              hover:bg-white/10 transition-all flex items-center justify-center gap-2"
+          >
+            📋 Share Invite
+          </button>
+          {isHost ? (
+            <button
+              onClick={handleStartGame}
+              disabled={players.length < 2}
+              className={`w-full py-4 rounded-2xl font-bold text-white font-body text-lg transition-all
+                ${players.length >= 2
+                  ? 'bg-gradient-to-r from-yellow-400 to-orange-500 shadow-[0_8px_30px_rgba(241,196,15,0.35)] hover:shadow-[0_12px_40px_rgba(241,196,15,0.5)]'
+                  : 'bg-white/5 text-white/40 cursor-not-allowed'}`}
+            >
+              🎮 {players.length >= 2 ? 'Start Game' : `Need ${2 - players.length} more...`}
+            </button>
+          ) : (
+            <div className="text-center py-4 text-sm text-yellow-400/60 font-semibold glass rounded-2xl">
+              Waiting for host to start...
+            </div>
+          )}
+        </div>
+      </motion.div>
+    );
+  }
+
+  // Result Modal
+  if (gamePhase === 'finished' && winnerPlayer) {
+    return (
+      <div className="min-h-screen relative z-10">
+        {/* Board visible behind - dimmed */}
+        <div style={{ opacity: 0.3, pointerEvents: 'none' }} className="scale-90">
+          {renderGameBoard()}
+        </div>
+        <ResultModal
+          onPlayAgain={onLeave}
+          onHome={onLeave}
+          resultData={{ winner: true, turns: room?.gameState?.turnNumber || 0 }}
+        />
+      </div>
+    );
+  }
+
+  // Game Board Content
+  const renderGameBoard = () => {
+    return (
+      <div className="min-h-screen flex flex-col relative z-10">
+        {/* Top bar */}
+        <div className="flex items-center justify-between px-4 py-3">
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={onLeave}
+            className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-sm text-white/50"
+          >
+            ✕
+          </motion.button>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white/30 font-semibold">Match:</span>
             <span
               onClick={handleCopyRoomId}
-              style={{
-                fontFamily: "'Fredoka One', cursive",
-                fontSize: 16,
-                color: '#f1c40f',
-                cursor: 'pointer',
-                letterSpacing: 2,
-                padding: '4px 10px',
-                background: 'rgba(241,196,15,0.1)',
-                borderRadius: 6,
-                border: '1px solid rgba(241,196,15,0.2)',
-              }}
-              title="Click to copy"
+              className="text-sm font-display text-yellow-400/70 tracking-wider cursor-pointer"
             >
-              {room?.id || '------'}
+              #{room?.id?.slice(0, 4)}
             </span>
-            {showCopied && (
-              <span style={{ fontSize: 11, color: '#2ecc71', fontWeight: 600 }}>
-                Copied! 📋
-              </span>
-            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500 shadow-[0_0_6px_rgba(46,204,113,0.6)]' : 'bg-red-500'}`} />
+            <EmojiReactionPicker sendReaction={socket.sendReaction} />
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowChat(!showChat)}
+              className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-sm"
+            >
+              💬
+            </motion.button>
           </div>
         </div>
 
-        {/* Game title */}
-        <div style={{
-          fontFamily: "'Fredoka One', cursive",
-          fontSize: 18,
-          background: 'linear-gradient(135deg, #f1c40f, #e67e22)',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          backgroundClip: 'text',
-        }}>
-          Ludo Royale
-        </div>
+        {/* Player Cards */}
+        {players.map((p, i) => (
+          <PlayerCard
+            key={i}
+            player={p}
+            playerIndex={i}
+            currentPlayerIndex={room?.gameState?.currentPlayerIndex}
+            totalPlayers={players.length}
+          />
+        ))}
 
-        {/* Toggle buttons */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button
-            onClick={() => setShowPlayers(!showPlayers)}
-            style={{
-              padding: '6px 12px',
-              border: `1px solid rgba(255,255,255,${showPlayers ? '0.2' : '0.05'})`,
-              borderRadius: 6,
-              background: showPlayers ? 'rgba(255,255,255,0.08)' : 'transparent',
-              color: '#888',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            👥 Players
-          </button>
-          <button
-            onClick={() => setShowLog(!showLog)}
-            style={{
-              padding: '6px 12px',
-              border: `1px solid rgba(255,255,255,${showLog ? '0.2' : '0.05'})`,
-              borderRadius: 6,
-              background: showLog ? 'rgba(255,255,255,0.08)' : 'transparent',
-              color: '#888',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            📜 Log
-          </button>
-        </div>
-      </div>
-
-      {/* Main game area */}
-      <div style={{
-        display: 'flex',
-        gap: 12,
-        flex: 1,
-        flexWrap: 'wrap',
-      }}>
-        {/* Left sidebar - Player panel */}
-        {showPlayers && (
-          <div style={{
-            width: 220,
-            minWidth: 200,
-            flexShrink: 0,
-          }}>
-            <div style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 16,
-              padding: 12,
-            }}>
-              <PlayerPanel
-                players={players}
-                currentPlayerIndex={room?.gameState?.currentPlayerIndex}
-                playerIndex={playerIndex}
-                diceValue={diceValue}
-                turnPhase={turnPhase}
-              />
-
-              {/* Start button (host only) */}
-              {gamePhase === 'lobby' && isHost && (
-                <button
-                  onClick={handleStartGame}
-                  disabled={players.length < 2}
-                  style={{
-                    width: '100%',
-                    marginTop: 12,
-                    padding: '12px 20px',
-                    border: 'none',
-                    borderRadius: 10,
-                    background: players.length >= 2
-                      ? 'linear-gradient(135deg, #2ecc71, #27ae60)'
-                      : 'rgba(255,255,255,0.05)',
-                    color: '#fff',
-                    fontSize: 14,
-                    fontWeight: 800,
-                    cursor: players.length >= 2 ? 'pointer' : 'not-allowed',
-                    opacity: players.length >= 2 ? 1 : 0.5,
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  🎮 Start Game ({players.length}/{room.maxPlayers || 6} players)
-                </button>
-              )}
-
-              {/* Waiting for host */}
-              {gamePhase === 'lobby' && !isHost && (
-                <div style={{
-                  marginTop: 12,
-                  padding: '10px 16px',
-                  background: 'rgba(241,196,15,0.08)',
-                  borderRadius: 8,
-                  fontSize: 12,
-                  color: '#f1c40f',
-                  textAlign: 'center',
-                  fontWeight: 600,
-                }}>
-                  Waiting for host to start the game...
-                </div>
-              )}
-
-              {/* Game in progress */}
-              {gamePhase === 'playing' && (
-                <div style={{
-                  marginTop: 12,
-                  padding: '10px 16px',
-                  background: 'rgba(46,204,113,0.08)',
-                  borderRadius: 8,
-                  fontSize: 12,
-                  color: '#2ecc71',
-                  textAlign: 'center',
-                  fontWeight: 600,
-                }}>
-                  🎲 Turn {room?.gameState?.turnNumber || 1}
-                  <br />
-                  <span style={{ fontSize: 11, color: '#888' }}>
-                    {players[room?.gameState?.currentPlayerIndex]?.emoji}{' '}
-                    {players[room?.gameState?.currentPlayerIndex]?.name}'s turn
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Center - Board */}
-        <div style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          minWidth: 300,
-        }}>
-          {/* Board */}
-          <div style={{
-            width: '100%',
-            maxWidth: 600,
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.06)',
-            borderRadius: 16,
-            padding: 8,
-            overflow: 'hidden',
-          }}>
+        {/* Board */}
+        <div className="flex-1 flex flex-col items-center justify-center px-3 py-2">
+          <div className="w-full max-w-[500px] glass rounded-2xl p-2.5 shadow-[0_8px_40px_rgba(0,0,0,0.4)]">
             <Board
               players={players}
               currentPlayerIndex={room?.gameState?.currentPlayerIndex}
@@ -457,69 +324,15 @@ export default function GameRoom({ socket, onLeave }) {
             />
           </div>
 
-          {/* Turn Timer Bar */}
-          {gamePhase === 'playing' && (
-            <div style={{
-              width: '100%',
-              maxWidth: 600,
-              marginTop: 8,
-            }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-              }}>
-                {/* Timer track */}
-                <div style={{
-                  flex: 1,
-                  height: 6,
-                  background: 'rgba(255,255,255,0.08)',
-                  borderRadius: 3,
-                  overflow: 'hidden',
-                  position: 'relative',
-                }}>
-                  <div style={{
-                    width: `${Math.max(0, (remainingSeconds / TURN_TIMEOUT) * 100)}%`,
-                    height: '100%',
-                    background: remainingSeconds > 10
-                      ? '#2ecc71'
-                      : remainingSeconds > 5
-                        ? '#f1c40f'
-                        : '#e74c3c',
-                    borderRadius: 3,
-                    transition: 'width 0.2s linear, background 0.5s ease',
-                    boxShadow: remainingSeconds < 5
-                      ? '0 0 8px rgba(231,76,60,0.5)'
-                      : 'none',
-                  }} />
-                </div>
-                {/* Timer text */}
-                <div style={{
-                  fontSize: 13,
-                  fontWeight: 800,
-                  fontFamily: "'Fredoka One', cursive",
-                  color: remainingSeconds > 10
-                    ? '#2ecc71'
-                    : remainingSeconds > 5
-                      ? '#f1c40f'
-                      : '#e74c3c',
-                  minWidth: 32,
-                  textAlign: 'center',
-                  transition: 'color 0.5s ease',
-                }}>
-                  {Math.ceil(remainingSeconds)}s
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Timer bar */}
+          <MatchTimer
+            turnStartTime={turnStartTime}
+            turnNumber={turnNumber}
+            gamePhase={gamePhase}
+          />
 
-          {/* Dice area */}
-          <div style={{
-            marginTop: 12,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 20,
-          }}>
+          {/* Dice & Controls */}
+          <div className="flex items-center justify-center gap-4 mt-4 flex-wrap">
             <Dice
               value={diceValue}
               rolling={rolling}
@@ -530,273 +343,64 @@ export default function GameRoom({ socket, onLeave }) {
               turnPhase={turnPhase}
             />
 
-            {/* Move instructions */}
             {isMyTurn && turnPhase === 'move' && (
-              <div style={{
-                padding: '10px 16px',
-                background: 'rgba(241,196,15,0.08)',
-                borderRadius: 10,
-                border: '1px solid rgba(241,196,15,0.15)',
-                fontSize: 13,
-                fontWeight: 600,
-                color: '#f1c40f',
-                animation: 'pulse 2s infinite',
-              }}>
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="px-4 py-2.5 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-sm font-bold"
+              >
                 {selectableTokens && selectableTokens.length > 0
-                  ? `Click a highlighted token to move (${selectableTokens.length} available)`
-                  : 'No valid moves!'}
-              </div>
+                  ? `Tap a highlighted token to move`
+                  : 'No valid moves'}
+              </motion.div>
             )}
 
-            {/* Extra turn indicator */}
             {isMyTurn && diceValue === 6 && turnPhase === 'move' && (
-              <div style={{
-                padding: '8px 14px',
-                background: 'rgba(46,204,113,0.1)',
-                borderRadius: 8,
-                fontSize: 12,
-                color: '#2ecc71',
-                fontWeight: 700,
-                animation: 'bounce 1s infinite',
-              }}>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="px-4 py-2 rounded-xl bg-green-500/15 border border-green-500/30 text-green-400 font-display text-sm"
+              >
                 🎉 Extra Turn!
-              </div>
+              </motion.div>
             )}
           </div>
         </div>
 
-        {/* Right sidebar - Chat & Log */}
-        {showLog && (
-          <div style={{
-            width: 240,
-            minWidth: 200,
-            flexShrink: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-          }}>
-            {/* Game log */}
-            <div style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 16,
-              overflow: 'hidden',
-            }}>
-              <div style={{
-                padding: '10px 14px',
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: 1.5,
-                color: '#666',
-                borderBottom: '1px solid rgba(255,255,255,0.05)',
-              }}>
-                📜 Game Log
-              </div>
-              <GameLog log={gameLog} playerIndex={playerIndex} />
-            </div>
+        {/* Chat panel */}
+        <GameChat
+          show={showChat}
+          onClose={() => setShowChat(false)}
+          onSendMessage={(msg) => socket.sendMessage?.(msg)}
+        />
 
-            {/* Chat */}
-            <div style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 16,
-              overflow: 'hidden',
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 160,
-            }}>
-              <div style={{
-                padding: '10px 14px',
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: 1.5,
-                color: '#666',
-                borderBottom: '1px solid rgba(255,255,255,0.05)',
-              }}>
-                💬 Chat
-              </div>
-
-              {/* Chat messages */}
-              <div style={{
-                flex: 1,
-                overflowY: 'auto',
-                padding: '8px 10px',
-                maxHeight: 160,
-              }}>
-                {chatMessages.length === 0 ? (
-                  <div style={{
-                    color: '#555',
-                    fontSize: 12,
-                    textAlign: 'center',
-                    padding: 20,
-                    fontStyle: 'italic',
-                  }}>
-                    No messages yet
-                  </div>
-                ) : (
-                  chatMessages.map((msg, i) => (
-                    <div key={i} style={{
-                      marginBottom: 6,
-                      animation: 'fadeIn 0.3s ease-out',
-                    }}>
-                      <div style={{
-                        fontSize: 12,
-                        color: msg.playerColor || '#ccc',
-                        fontWeight: 700,
-                      }}>
-                        {msg.playerEmoji} {msg.playerName}
-                      </div>
-                      <div style={{
-                        fontSize: 12,
-                        color: '#aaa',
-                        marginLeft: 4,
-                        wordBreak: 'break-word',
-                      }}>
-                        {msg.message}
-                      </div>
-                    </div>
-                  ))
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              {/* Chat input */}
-              <form
-                onSubmit={handleChatSubmit}
-                style={{
-                  display: 'flex',
-                  borderTop: '1px solid rgba(255,255,255,0.05)',
-                }}
-              >
-                <input
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  placeholder="Type a message..."
-                  maxLength={200}
-                  style={{
-                    flex: 1,
-                    padding: '10px 12px',
-                    border: 'none',
-                    background: 'transparent',
-                    color: '#ccc',
-                    fontSize: 12,
-                    outline: 'none',
-                    fontFamily: 'Nunito, sans-serif',
-                  }}
-                />
-                <button
-                  type="submit"
-                  disabled={!chatInput.trim()}
-                  style={{
-                    padding: '10px 12px',
-                    border: 'none',
-                    background: 'transparent',
-                    color: chatInput.trim() ? '#f1c40f' : '#444',
-                    cursor: chatInput.trim() ? 'pointer' : 'default',
-                    fontSize: 16,
-                  }}
-                >
-                  ➤
-                </button>
-              </form>
+        {/* Turn status bar at bottom */}
+        {gamePhase === 'playing' && currentPlayer && (
+          <div className="safe-bottom px-4 pb-3">
+            <div
+              className="glass rounded-2xl py-3 px-5 text-center"
+              style={{ borderColor: `${currentPlayer.color}33`, borderWidth: 1 }}
+            >
+              <p className="text-sm font-bold" style={{ color: currentPlayer.color }}>
+                {currentPlayer.emoji} {isMyTurn ? 'Your Turn' : `${currentPlayer.name}'s Turn`}
+                {diceValue !== null && ` • Rolled ${diceValue}`}
+              </p>
             </div>
           </div>
         )}
-      </div>
 
-      {/* Game Over Modal */}
-      {gamePhase === 'finished' && winnerPlayer && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0,0,0,0.7)',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1000,
-          animation: 'fadeIn 0.5s ease-out',
-        }}>
-          <div style={{
-            background: 'linear-gradient(135deg, #1a1a2e, #16213e)',
-            border: '2px solid rgba(241,196,15,0.3)',
-            borderRadius: 24,
-            padding: '40px 48px',
-            textAlign: 'center',
-            maxWidth: 400,
-            width: '90%',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-            animation: 'fadeIn 0.6s ease-out',
-          }}>
-            <div style={{ fontSize: 64, marginBottom: 16 }}>🏆</div>
-            <h2 style={{
-              fontFamily: "'Fredoka One', cursive",
-              fontSize: 32,
-              color: winnerPlayer.color || '#f1c40f',
-              marginBottom: 8,
-            }}>
-              {winnerPlayer.emoji} {winnerPlayer.name} Wins!
-            </h2>
-            <p style={{
-              color: '#888',
-              fontSize: 14,
-              marginBottom: 24,
-            }}>
-              Congratulations! All tokens home in {room?.gameState?.turnNumber || 0} turns.
-            </p>
-            <button
-              onClick={onLeave}
-              style={{
-                padding: '12px 32px',
-                border: 'none',
-                borderRadius: 12,
-                background: 'linear-gradient(135deg, #f1c40f, #e67e22)',
-                color: '#fff',
-                fontSize: 16,
-                fontWeight: 800,
-                cursor: 'pointer',
-                transition: 'transform 0.2s',
-              }}
-            >
-              Play Again
-            </button>
+        {/* Floating reactions overlay */}
+        <FloatingReactions />
+
+        {/* Not connected banner */}
+        {!connected && (
+          <div className="fixed top-0 left-0 right-0 z-50 py-2.5 px-4 bg-red-500/20 border-b border-red-500/30 text-red-400 text-sm font-bold text-center">
+            🔴 Disconnected. Reconnecting...
           </div>
-        </div>
-      )}
+        )}
+      </div>
+    );
+  }
 
-      {/* Players inline on smaller screens or when sidebar hidden */}
-      {!showPlayers && (
-        <div style={{
-          display: 'flex',
-          gap: 8,
-          marginTop: 12,
-          flexWrap: 'wrap',
-          justifyContent: 'center',
-        }}>
-          {players.map((p, i) => (
-            <div key={i} style={{
-              padding: '6px 12px',
-              borderRadius: 8,
-              background: i === room?.gameState?.currentPlayerIndex
-                ? `${p.color}22`
-                : 'rgba(255,255,255,0.03)',
-              border: `1px solid ${i === room?.gameState?.currentPlayerIndex ? p.color + '44' : 'rgba(255,255,255,0.06)'}`,
-              fontSize: 12,
-              fontWeight: 600,
-              color: i === playerIndex ? '#fff' : '#888',
-            }}>
-              {p.emoji} {p.name}
-              {p.tokens.filter(t => tokenIsFinished(t, i)).length === TOKENS_PER_PLAYER && ' ✅'}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+  return renderGameBoard();
 }

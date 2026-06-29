@@ -10,9 +10,9 @@ export default function GameLog({ log, playerIndex }) {
   if (!log || log.length === 0) {
     return (
       <div style={{
-        padding: 20,
+        padding: 24,
         textAlign: 'center',
-        color: '#555',
+        color: 'rgba(255,255,255,0.2)',
         fontSize: 13,
         fontStyle: 'italic',
       }}>
@@ -23,51 +23,75 @@ export default function GameLog({ log, playerIndex }) {
 
   return (
     <div style={{
-      maxHeight: 200,
+      maxHeight: 240,
       overflowY: 'auto',
-      padding: '8px 4px',
+      padding: '6px 4px',
     }}>
-      {log.map((entry, idx) => (
-        <div
-          key={idx}
-          style={{
-            padding: '6px 10px',
-            marginBottom: 4,
-            borderRadius: 8,
-            background: entry.playerIdx === -1
-              ? 'rgba(255,255,255,0.03)'
-              : entry.playerIdx === playerIndex
-                ? 'rgba(241,196,15,0.05)'
-                : 'transparent',
-            borderLeft: `3px solid ${entry.playerIdx === -1 ? 'rgba(255,255,255,0.1)' : 'transparent'}`,
-            animation: 'fadeIn 0.3s ease-out',
-            fontSize: 12,
-            lineHeight: 1.4,
-          }}
-        >
-          <div style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 6,
-          }}>
-            <span style={{
-              color: '#555',
-              fontSize: 10,
-              fontWeight: 600,
-              minWidth: 24,
-              fontFamily: 'monospace',
+      {log.map((entry, idx) => {
+        const isSystem = entry.playerIdx === -1;
+        const isMe = entry.playerIdx === playerIndex;
+
+        return (
+          <div
+            key={idx}
+            style={{
+              padding: '6px 10px',
+              marginBottom: 3,
+              borderRadius: 8,
+              background: isSystem
+                ? 'rgba(255,255,255,0.02)'
+                : isMe
+                  ? 'rgba(241,196,15,0.06)'
+                  : 'transparent',
+              borderLeft: `3px solid ${
+                isSystem
+                  ? 'rgba(255,255,255,0.08)'
+                  : isMe
+                    ? '#f1c40f'
+                    : 'transparent'
+              }`,
+              animation: 'fadeIn 0.3s ease-out',
+              fontSize: 12,
+              lineHeight: 1.4,
+              transition: 'background 0.2s',
+            }}
+          >
+            <div style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 8,
             }}>
-              T{entry.turn}
-            </span>
-            <span style={{
-              color: '#888',
-              flex: 1,
-            }}>
-              {entry.description}
-            </span>
+              {/* Turn number badge */}
+              <span style={{
+                color: 'rgba(255,255,255,0.2)',
+                fontSize: 9,
+                fontWeight: 700,
+                minWidth: 20,
+                fontFamily: 'monospace',
+                background: 'rgba(255,255,255,0.04)',
+                padding: '1px 4px',
+                borderRadius: 4,
+                textAlign: 'center',
+              }}>
+                T{entry.turn}
+              </span>
+
+              {/* Entry content */}
+              <span style={{
+                color: isSystem
+                  ? 'rgba(255,255,255,0.4)'
+                  : isMe
+                    ? '#ddd'
+                    : 'rgba(255,255,255,0.55)',
+                flex: 1,
+                fontWeight: isMe ? 600 : 400,
+              }}>
+                {entry.description}
+              </span>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
       <div ref={logEndRef} />
     </div>
   );

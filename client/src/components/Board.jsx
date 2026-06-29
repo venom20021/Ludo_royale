@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   TRACK_SIZE,
   HOME_STRETCH_LENGTH,
@@ -13,13 +14,16 @@ import {
   getTrackCellPositions,
   getHomeStretchPositions,
   getHomeBasePositions,
-  getHexVertices,
+  getPolygonVertices,
+  getNumBoardSides,
   START_POS,
   HOME_ENTRY,
 } from '../constants.js';
 
 const GLOW_FILTER_ID = 'board-glow';
 const TOKEN_FILTER_ID = 'token-shadow';
+const TOKEN_SPRING = { type: 'spring', stiffness: 300, damping: 22, mass: 0.6 };
+const CAPTURE_ANIM_DURATION = 1200;
 
 export default function Board({
   players,
@@ -30,9 +34,176 @@ export default function Board({
   onTokenClick,
   selectableTokens,
 }) {
-  const trackCells = useMemo(() => getTrackCellPositions(240), []);
-  const hexVertices = useMemo(() => getHexVertices(320), []);
-  const outerHex = useMemo(() => getHexVertices(430), []);
+  const numSides = useMemo(() => getNumBoardSides(players.length), [players.length]);
+  const trackCells = useMemo(() => getTrackCellPositions(numSides, 240), [numSides]);
+  const polyVertices = useMemo(() => getPolygonVertices(numSides, 320), [numSides]);
+  const outerPoly = useMemo(() => getPolygonVertices(numSides, 430), [numSides]);
+
+  // Capture animation state
+  const [captureEffects, setCaptureEffects] = useState([]);
+  const [finishedEffects, setFinishedEffects] = useState([]);
+  const [victoryEffects, setVictoryEffects] = useState([]);
+  const prevPlayersRef = useRef(null);
+
+  // Detect captures AND finished tokens by comparing old vs new token positions
+  useEffect(() => {
+    if (!prevPlayersRef.current || !trackCells) {
+      prevPlayersRef.current = JSON.parse(JSON.stringify(players));
+      return;
+    }
+
+    const prevPlayers = prevPlayersRef.current;
+    const newCaptureEffects = [];
+    const newFinishedEffects = [];
+
+    for (let pIdx = 0; pIdx < players.length; pIdx++) {
+      const prevTokens = prevPlayers[pIdx]?.tokens || [];
+
+      for (let tIdx = 0; tIdx < players[pIdx].tokens.length; tIdx++) {
+        const oldPos = prevTokens[tIdx];
+        const newPos = players[pIdx].tokens[tIdx];
+
+        // Token was on track (0-59) and is now home (-1) → captured!
+        if (oldPos !== undefined && oldPos >= 0 && oldPos < TRACK_SIZE && newPos === -1) {
+          const cell = trackCells[oldPos];
+          if (!cell) continue;
+
+          const color = players[pIdx]?.color || PLAYER_COLORS[players[pIdx]?.colorIndex ?? pIdx];
+
+          // Animate at the captured token's old position
+          const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          newCaptureEffects.push({
+            id: `cap-${pIdx}-${tIdx}-${uid}`,
+            x: cell.x,
+            y: cell.y,
+            color,
+            type: 'captured',
+          });
+
+          // Also animate the capturer at the same position
+          if (currentPlayerIndex !== undefined && currentPlayerIndex !== null) {
+            const cp = players[currentPlayerIndex];
+            if (cp) {
+              const capturerColor = cp.color || PLAYER_COLORS[cp.colorIndex];
+              newCaptureEffects.push({
+                id: `capr-${currentPlayerIndex}-${uid}`,
+                x: cell.x,
+                y: cell.y,
+                color: capturerColor,
+                type: 'capturer',
+              });
+            }
+          }
+        }
+
+        // Token just finished (reached home) → celebration!
+        const justFinished = oldPos !== undefined &&
+          !tokenIsFinished(oldPos, pIdx) &&
+          tokenIsFinished(newPos, pIdx);
+        
+        if (justFinished) {
+          const color = players[pIdx]?.color || PLAYER_COLORS[players[pIdx]?.colorIndex ?? pIdx];
+          const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          
+          // Pre-compute confetti particles for stable animation
+          const confetti = Array.from({ length: 8 }, (_, i) => ({
+            angle: (i * 45 + Math.random() * 20) * (Math.PI / 180),
+            dist: 50 + Math.random() * 90,
+            r: 2 + Math.random() * 3,
+            delay: 0.05 + i * 0.04,
+            color: [color, '#f1c40f', '#fff', '#ff6b6b', '#48dbfb', '#ff9ff3', '#54a0ff', '#5f27cd'][i % 8],
+          }));
+          
+          // Pre-compute star positions for stable animation
+          const stars = [
+            { emoji: '⭐', x: -28, fontSize: 18 },
+            { emoji: '✨', x: 2, fontSize: 16 },
+            { emoji: '🎉', x: 30, fontSize: 20 },
+          ];
+          
+          newFinishedEffects.push({
+            id: `fin-${pIdx}-${tIdx}-${uid}`,
+            cx: BOARD_CENTER.x,
+            cy: BOARD_CENTER.y,
+            color,
+            playerName: players[pIdx]?.name || `P${pIdx + 1}`,
+            emoji: players[pIdx]?.emoji || '🎲',
+            tokenNumber: tIdx + 1,
+            confetti,
+            stars,
+          });
+        }
+      }
+    }
+
+    // Detect if a player just won (all tokens finished)
+    for (let pIdx = 0; pIdx < players.length; pIdx++) {
+      const prevPlayer = prevPlayers[pIdx];
+      const currentPlayer = players[pIdx];
+      if (!prevPlayer || !currentPlayer) continue;
+
+      const prevAllFinished = prevPlayer.finished || prevPlayer.tokens.every((t, ti) => tokenIsFinished(t, pIdx));
+      const currentAllFinished = currentPlayer.finished || currentPlayer.tokens.every(t => tokenIsFinished(t, pIdx));
+
+      if (!prevAllFinished && currentAllFinished) {
+        const color = currentPlayer.color || PLAYER_COLORS[currentPlayer.colorIndex];
+        const uid = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+        // Pre-compute large confetti burst for victory
+        const confetti = Array.from({ length: 24 }, (_, i) => ({
+          angle: (i * 15 + Math.random() * 10) * (Math.PI / 180),
+          dist: 60 + Math.random() * 140,
+          r: 2 + Math.random() * 4,
+          delay: Math.random() * 0.5,
+          color: [color, '#f1c40f', '#fff', '#ff6b6b', '#48dbfb', '#ff9ff3', '#54a0ff', '#5f27cd', '#feca57', '#00d2d3'][i % 10],
+        }));
+
+        // Pre-compute floating victory emojis
+        const floatingEmojis = ['🏆', '👑', '🎉', '🎊', '✨', '⭐', '🌟', '💫'].map((emoji, i) => ({
+          emoji,
+          x: -70 + i * 20 + Math.random() * 10,
+          fontSize: 16 + Math.random() * 12,
+          delay: 0.1 + i * 0.08,
+        }));
+
+        setVictoryEffects([{  // Replace any existing victory with new one
+          id: `victory-${pIdx}-${uid}`,
+          cx: BOARD_CENTER.x,
+          cy: BOARD_CENTER.y,
+          color,
+          playerName: currentPlayer.name || `P${pIdx + 1}`,
+          emoji: currentPlayer.emoji || '🎲',
+          confetti,
+          floatingEmojis,
+        }]);
+      }
+    }
+
+    if (newCaptureEffects.length > 0) {
+      const ids = newCaptureEffects.map(e => e.id);
+      setCaptureEffects(prev => [...prev, ...newCaptureEffects]);
+      setTimeout(() => {
+        setCaptureEffects(prev => prev.filter(e => !ids.includes(e.id)));
+      }, CAPTURE_ANIM_DURATION);
+    }
+
+    if (newFinishedEffects.length > 0) {
+      const ids = newFinishedEffects.map(e => e.id);
+      setFinishedEffects(prev => [...prev, ...newFinishedEffects]);
+      setTimeout(() => {
+        setFinishedEffects(prev => prev.filter(e => !ids.includes(e.id)));
+      }, 2000);
+    }
+
+    prevPlayersRef.current = JSON.parse(JSON.stringify(players));
+  }, [players, trackCells, currentPlayerIndex]);
+
+  // Auto-clear victory effects after 4 seconds
+  useEffect(() => {
+    if (victoryEffects.length === 0) return;
+    const timer = setTimeout(() => setVictoryEffects([]), 4000);
+    return () => clearTimeout(timer);
+  }, [victoryEffects]);
 
   const isTokenSelectable = (pIdx, tIdx) => {
     return selectableTokens && selectableTokens.some(
@@ -58,7 +229,7 @@ export default function Board({
   };
 
   const getHomeBase = (pIdx) => {
-    const angle = (Math.PI / 2) - (pIdx * Math.PI / 3);
+    const angle = (Math.PI / 2) - (pIdx * 2 * Math.PI / numSides);
     const radius = 330;
     return {
       x: BOARD_CENTER.x + radius * Math.cos(angle),
@@ -149,8 +320,8 @@ export default function Board({
 
   const renderArmZones = () => {
     return players.map((player, pIdx) => {
-      const v1 = hexVertices[pIdx];
-      const v2 = hexVertices[(pIdx + 1) % 6];
+      const v1 = polyVertices[pIdx];
+      const v2 = polyVertices[(pIdx + 1) % numSides];
       const points = `${BOARD_CENTER.x},${BOARD_CENTER.y} ${v1.x},${v1.y} ${v2.x},${v2.y}`;
       return (
         <polygon
@@ -162,70 +333,61 @@ export default function Board({
     });
   };
 
-  const renderWoodFrame = () => {
+  const renderBoardFrame = () => {
     return (
       <g>
-        {/* Outer wood frame */}
+        {/* Outer frame - dark glass */}
         <rect
           x={-10}
           y={-10}
           width={BOARD_SIZE + 20}
           height={BOARD_SIZE + 20}
           rx={24}
-          fill="#5c3d2e"
+          fill="#12122a"
+          stroke="rgba(255,255,255,0.06)"
+          strokeWidth={2}
         />
-        {/* Frame inner edge */}
+        {/* Frame glow edge */}
         <rect
-          x={-2}
-          y={-2}
-          width={BOARD_SIZE + 4}
-          height={BOARD_SIZE + 4}
+          x={-6}
+          y={-6}
+          width={BOARD_SIZE + 12}
+          height={BOARD_SIZE + 12}
           rx={22}
           fill="none"
-          stroke="#3d2518"
-          strokeWidth={4}
-        />
-        {/* Frame bevel */}
-        <rect
-          x={2}
-          y={2}
-          width={BOARD_SIZE - 4}
-          height={BOARD_SIZE - 4}
-          rx={20}
-          fill="none"
-          stroke="#7a5240"
+          stroke="rgba(241,196,15,0.08)"
           strokeWidth={1}
-          opacity={0.5}
         />
-        {/* Green felt edge visible inside frame */}
-        <rect
-          x={8}
-          y={8}
-          width={BOARD_SIZE - 16}
-          height={BOARD_SIZE - 16}
-          rx={18}
-          fill="#2d5a27"
-          opacity={0.5}
-        />
-        {/* Cream board surface */}
+        {/* Dark board surface with subtle radial gradient */}
         <rect
           x={18}
           y={18}
           width={BOARD_SIZE - 36}
           height={BOARD_SIZE - 36}
           rx={16}
-          fill="#f0e6d3"
+          fill="#0d0d24"
         />
-        {/* Board surface inner shadow */}
+        {/* Surface vignette */}
         <ellipse
           cx={BOARD_CENTER.x}
           cy={BOARD_CENTER.y}
-          rx={380}
-          ry={380}
+          rx={360}
+          ry={360}
           fill="none"
-          stroke="#d4c9b0"
-          strokeWidth={2}
-          opacity={0.6}
+          stroke="rgba(88,51,239,0.08)"
+          strokeWidth={80}
+          opacity={0.4}
+        />
+        {/* Subtle grid pattern */}
+        <ellipse
+          cx={BOARD_CENTER.x}
+          cy={BOARD_CENTER.y}
+          rx={340}
+          ry={340}
+          fill="none"
+          stroke="rgba(255,255,255,0.02)"
+          strokeWidth={1}
+          strokeDasharray="4 8"
         />
       </g>
     );
@@ -237,20 +399,20 @@ export default function Board({
 
     return (
       <g>
-        {/* Center white circle */}
+        {/* Center circle */}
         <circle
           cx={BOARD_CENTER.x}
           cy={BOARD_CENTER.y}
           r={centerR}
-          fill="#f5efe0"
-          stroke="#c4b99e"
+          fill="#1a1a3a"
+          stroke="rgba(241,196,15,0.2)"
           strokeWidth={1.5}
         />
 
-        {/* 6 colored triangles in the center */}
+        {/* Colored triangles in the center */}
         {players.map((player, pIdx) => {
-          const angle1 = (Math.PI / 2) - (pIdx * Math.PI / 3);
-          const angle2 = (Math.PI / 2) - ((pIdx + 1) * Math.PI / 3);
+          const angle1 = (Math.PI / 2) - (pIdx * 2 * Math.PI / numSides);
+          const angle2 = (Math.PI / 2) - ((pIdx + 1) * 2 * Math.PI / numSides);
           const color = player.color || PLAYER_COLORS[player.colorIndex];
           const pts = [
             `${BOARD_CENTER.x + innerR * Math.cos(angle1)},${BOARD_CENTER.y - innerR * Math.sin(angle1)}`,
@@ -271,16 +433,16 @@ export default function Board({
           );
         })}
 
-        {/* Center inner hexagon with trophy */}
+        {/* Center inner polygon with trophy */}
         <polygon
           points={
-            Array.from({ length: 6 }, (_, i) => {
-              const angle = (Math.PI / 2) - (i * Math.PI / 3);
+            Array.from({ length: numSides }, (_, i) => {
+              const angle = (Math.PI / 2) - (i * 2 * Math.PI / numSides);
               return `${BOARD_CENTER.x + innerR * Math.cos(angle)},${BOARD_CENTER.y - innerR * Math.sin(angle)}`;
             }).join(' ')
           }
-          fill="rgba(255,255,255,0.6)"
-          stroke="#c4b99e"
+          fill="rgba(255,255,255,0.08)"
+          stroke="rgba(241,196,15,0.15)"
           strokeWidth={1}
         />
 
@@ -300,9 +462,8 @@ export default function Board({
           cy={BOARD_CENTER.y}
           r={centerR}
           fill="none"
-          stroke="#c4b99e"
+          stroke="rgba(241,196,15,0.1)"
           strokeWidth={1}
-          opacity={0.5}
         />
       </g>
     );
@@ -311,7 +472,7 @@ export default function Board({
   const renderHomeBases = () => {
     return players.map((player, pIdx) => {
       const base = getHomeBase(pIdx);
-      const positions = getHomeBasePositions(pIdx);
+      const positions = getHomeBasePositions(pIdx, numSides);
       const isCurrent = pIdx === currentPlayerIndex;
       const color = player.color || PLAYER_COLORS[player.colorIndex];
 
@@ -590,11 +751,11 @@ export default function Board({
             width={size}
             height={size}
             rx={3}
-            fill={zoneColor || '#faf6ed'}
-            fillOpacity={cellOpacity}
-            stroke={borderColor}
-            strokeWidth={borderWidth}
-            strokeOpacity={zoneColor ? 0.6 : 0.4}
+      fill={zoneColor || '#1a1a3a'}
+      fillOpacity={cellOpacity}
+      stroke={borderColor}
+      strokeWidth={borderWidth}
+      strokeOpacity={zoneColor ? 0.6 : 0.15}
           />
 
           {/* Inner border for colored zones */}
@@ -660,7 +821,7 @@ export default function Board({
           x = cell.x;
           y = cell.y;
         } else if (tokenIsOnHomeStretch(pos, pIdx)) {
-          const hsPositions = getHomeStretchPositions(pIdx);
+          const hsPositions = getHomeStretchPositions(pIdx, numSides);
           const hsIndex = pos - (100 + pIdx * 10);
           x = hsPositions[hsIndex].x;
           y = hsPositions[hsIndex].y;
@@ -676,80 +837,87 @@ export default function Board({
             onClick={() => isSelectable && onTokenClick?.(pIdx, tIdx)}
             style={{ cursor: isSelectable ? 'pointer' : 'default' }}
           >
-            {/* Shadow */}
-            <circle
-              cx={x + 1.5}
-              cy={y + 2}
-              r={radius}
-              fill="rgba(0,0,0,0.3)"
-              filter={`url(#${TOKEN_FILTER_ID})`}
-            />
+            {/* Token group with spring animation */}
+            <g>
+              {/* Shadow */}
+              <motion.circle
+                r={radius}
+                fill="rgba(0,0,0,0.3)"
+                filter={`url(#${TOKEN_FILTER_ID})`}
+                initial={false}
+                animate={{ cx: x + 1.5, cy: y + 2, r: radius }}
+                transition={TOKEN_SPRING}
+              />
 
-            {/* Token body */}
-            <circle
-              cx={x}
-              cy={y}
-              r={radius}
-              fill={`url(#token-grad-${pIdx})`}
-              stroke={isSelectable ? '#fff' : 'rgba(255,255,255,0.35)'}
-              strokeWidth={isSelectable ? 2.5 : 1.5}
-            >
-              {isSelectable && (
-                <animate
-                  attributeName="r"
-                  values={`${radius};${radius + 2};${radius}`}
-                  dur="1.2s"
-                  repeatCount="indefinite"
-                />
-              )}
-            </circle>
-
-            {/* Specular highlight */}
-            <circle
-              cx={x - 2.5}
-              cy={y - 2.5}
-              r={radius * 0.35}
-              fill="rgba(255,255,255,0.35)"
-            />
-
-            {/* Token number */}
-            <text
-              x={x}
-              y={y + 1}
-              textAnchor="middle"
-              dominantBaseline="middle"
-              fill="#fff"
-              fontSize={isSelectable ? 10 : 8}
-              fontWeight={800}
-              fontFamily="sans-serif"
-            >
-              {tIdx + 1}
-            </text>
-
-            {/* Selection ring */}
-            {isSelectable && (
-              <circle
-                cx={x}
-                cy={y}
-                r={radius + 6}
-                fill="none"
-                stroke="rgba(255,255,255,0.8)"
-                strokeWidth={2}
+              {/* Token body */}
+              <motion.circle
+                r={radius}
+                fill={`url(#token-grad-${pIdx})`}
+                stroke={isSelectable ? '#fff' : 'rgba(255,255,255,0.35)'}
+                strokeWidth={isSelectable ? 2.5 : 1.5}
+                initial={false}
+                animate={{ cx: x, cy: y, r: radius }}
+                transition={TOKEN_SPRING}
               >
-                <animate
-                  attributeName="r"
-                  values={`${radius + 6};${radius + 10};${radius + 6}`}
-                  dur="1s"
-                  repeatCount="indefinite"
-                />
-                <animate
-                  attributeName="opacity"
-                  values="0.8;0.15;0.8"
-                  dur="1s"
-                  repeatCount="indefinite"
-                />
-              </circle>
-            )}
+                {isSelectable && (
+                  <animate
+                    attributeName="r"
+                    values={`${radius};${radius + 2};${radius}`}
+                    dur="1.2s"
+                    repeatCount="indefinite"
+                  />
+                )}
+              </motion.circle>
+
+              {/* Specular highlight */}
+              <motion.circle
+                r={radius * 0.35}
+                fill="rgba(255,255,255,0.35)"
+                initial={false}
+                animate={{ cx: x - 2.5, cy: y - 2.5, r: radius * 0.35 }}
+                transition={TOKEN_SPRING}
+              />
+
+              {/* Token number */}
+              <motion.text
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fill="#fff"
+                fontSize={isSelectable ? 10 : 8}
+                fontWeight={800}
+                fontFamily="sans-serif"
+                initial={false}
+                animate={{ x, y: y + 1 }}
+                transition={TOKEN_SPRING}
+              >
+                {tIdx + 1}
+              </motion.text>
+
+              {/* Selection ring */}
+              {isSelectable && (
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={radius + 6}
+                  fill="none"
+                  stroke="rgba(255,255,255,0.8)"
+                  strokeWidth={2}
+                >
+                  <animate
+                    attributeName="r"
+                    values={`${radius + 6};${radius + 10};${radius + 6}`}
+                    dur="1s"
+                    repeatCount="indefinite"
+                  />
+                  <animate
+                    attributeName="opacity"
+                    values="0.8;0.15;0.8"
+                    dur="1s"
+                    repeatCount="indefinite"
+                  />
+                </circle>
+              )}
+            </g>
           </g>
         );
       });
@@ -758,7 +926,7 @@ export default function Board({
 
   const renderHomeStretches = () => {
     return players.map((player, pIdx) => {
-      const hsPositions = getHomeStretchPositions(pIdx);
+      const hsPositions = getHomeStretchPositions(pIdx, numSides);
       const color = player.color || PLAYER_COLORS[player.colorIndex];
       const entry = HOME_ENTRY[pIdx];
       const entryCell = trackCells[entry];
@@ -837,8 +1005,8 @@ export default function Board({
     });
   };
 
-  // Compute outer hex for arm zone clipping
-  const armOuterHex = outerHex.map(v => `${v.x},${v.y}`).join(' ');
+  // Compute outer polygon for arm zone clipping
+  const outerPolyPoints = outerPoly.map(v => `${v.x},${v.y}`).join(' ');
 
   return (
     <svg
@@ -852,18 +1020,16 @@ export default function Board({
     >
       {renderSVGFilters()}
 
-      {/* Outer wood frame */}
-      {renderWoodFrame()}
+      {/* Board frame */}
+      {renderBoardFrame()}
 
       {/* Colored arm zones */}
       <clipPath id="board-clip">
-        <polygon points={armOuterHex} />
+        <polygon points={outerPolyPoints} />
       </clipPath>
       <g clipPath="url(#board-clip)">
         {renderArmZones()}
       </g>
-
-      {/* Outer hexagonal ring */}
 
       {/* Center area */}
       {renderCenter()}
@@ -874,13 +1040,13 @@ export default function Board({
       {/* Track cells */}
       {renderTrack()}
 
-      {/* Hexagon track ring border */}
+      {/* Track ring border */}
       <polygon
         points={
-          getHexVertices(255).map(v => `${v.x},${v.y}`).join(' ')
+          getPolygonVertices(numSides, 255).map(v => `${v.x},${v.y}`).join(' ')
         }
         fill="none"
-        stroke="#c4b99e"
+        stroke="rgba(241,196,15,0.15)"
         strokeWidth={0.5}
         opacity={0.3}
       />
@@ -890,6 +1056,342 @@ export default function Board({
 
       {/* Tokens on track/home stretch */}
       {renderTokens()}
+
+      {/* Capture animation effects */}
+      <AnimatePresence>
+        {captureEffects.map(effect => (
+          <g key={effect.id}>
+            {effect.type === 'capturer' && (
+              <>
+                <motion.circle
+                  cx={effect.x}
+                  cy={effect.y}
+                  r={0}
+                  fill="none"
+                  stroke={effect.color}
+                  strokeWidth={3}
+                  strokeOpacity={0.9}
+                  initial={{ r: 0, opacity: 0.9 }}
+                  animate={{ r: 30, opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.6, ease: 'easeOut' }}
+                />
+                <motion.circle
+                  cx={effect.x}
+                  cy={effect.y}
+                  r={0}
+                  fill="none"
+                  stroke={effect.color}
+                  strokeWidth={1.5}
+                  strokeOpacity={0.5}
+                  initial={{ r: 0, opacity: 0.5 }}
+                  animate={{ r: 45, opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.8, ease: 'easeOut', delay: 0.1 }}
+                />
+                <motion.circle
+                  cx={effect.x}
+                  cy={effect.y}
+                  r={10}
+                  fill={effect.color}
+                  initial={{ opacity: 0.8, scale: 0.3 }}
+                  animate={{ opacity: 0, scale: 3 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.45, ease: 'easeOut' }}
+                />
+                <motion.text
+                  x={effect.x}
+                  y={effect.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={20}
+                  fontWeight={900}
+                  initial={{ opacity: 1, scale: 0.3, y: effect.y }}
+                  animate={{ opacity: 0, scale: 2.2, y: effect.y - 18 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.7, ease: 'easeOut' }}
+                >
+                  ⚡
+                </motion.text>
+              </>
+            )}
+            {effect.type === 'captured' && (
+              <>
+                <motion.circle
+                  cx={effect.x}
+                  cy={effect.y}
+                  r={8}
+                  fill="#ff4444"
+                  initial={{ opacity: 0.6, scale: 0.2 }}
+                  animate={{ opacity: 0, scale: 2.5 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.5, ease: 'easeOut' }}
+                />
+                <motion.circle
+                  cx={effect.x}
+                  cy={effect.y}
+                  r={0}
+                  fill="none"
+                  stroke="#ff4444"
+                  strokeWidth={2}
+                  initial={{ r: 0, opacity: 0.7 }}
+                  animate={{ r: 24, opacity: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.5, ease: 'easeOut' }}
+                />
+                <motion.text
+                  x={effect.x}
+                  y={effect.y}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={18}
+                  initial={{ opacity: 1, scale: 0.4, y: effect.y }}
+                  animate={{ opacity: 0, scale: 1.8, y: effect.y - 15 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.6, ease: 'easeOut' }}
+                >
+                  💥
+                </motion.text>
+              </>
+            )}
+          </g>
+        ))}
+      </AnimatePresence>
+
+      {/* Victory celebration animation - when a player wins all tokens home */}
+      <AnimatePresence>
+        {victoryEffects.map(effect => (
+          <g key={effect.id}>
+            {/* Massive golden expanding shockwave 1 */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={0}
+              fill="none"
+              stroke="#f1c40f"
+              strokeWidth={4}
+              strokeOpacity={0.9}
+              initial={{ r: 0, opacity: 0.9 }}
+              animate={{ r: 160, opacity: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1.2, ease: 'easeOut' }}
+            />
+            {/* Large golden ring 2 */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={0}
+              fill="none"
+              stroke="#f1c40f"
+              strokeWidth={2}
+              strokeOpacity={0.6}
+              initial={{ r: 0, opacity: 0.6 }}
+              animate={{ r: 240, opacity: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1.5, ease: 'easeOut', delay: 0.2 }}
+            />
+            {/* Player-colored massive burst */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={20}
+              fill={effect.color}
+              initial={{ opacity: 0.7, scale: 0.3 }}
+              animate={{ opacity: 0, scale: 6 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.8, ease: 'easeOut' }}
+            />
+            {/* White center flash */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={12}
+              fill="#fff"
+              initial={{ opacity: 1, scale: 0.1 }}
+              animate={{ opacity: 0, scale: 3 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4, ease: 'easeOut' }}
+            />
+            {/* Victory confetti burst (24 particles) */}
+            {effect.confetti.map((p, i) => (
+              <motion.circle
+                key={`vconf-${i}`}
+                cx={effect.cx}
+                cy={effect.cy}
+                r={p.r}
+                fill={p.color}
+                initial={{ opacity: 1, x: 0, y: 0 }}
+                animate={{
+                  opacity: 0,
+                  x: Math.cos(p.angle) * p.dist,
+                  y: Math.sin(p.angle) * p.dist,
+                }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 1.2, ease: 'easeOut', delay: p.delay }}
+              />
+            ))}
+            {/* Floating victory emojis rising up */}
+            {effect.floatingEmojis.map((s, i) => (
+              <motion.text
+                key={`vemoji-${i}`}
+                x={effect.cx + s.x}
+                y={effect.cy}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize={s.fontSize}
+                initial={{ opacity: 1, y: effect.cy }}
+                animate={{ opacity: 0, y: effect.cy - 80 - i * 20 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 1.5, ease: 'easeOut', delay: s.delay }}
+              >
+                {s.emoji}
+              </motion.text>
+            ))}
+            {/* Crown drop animation */}
+            <motion.text
+              x={effect.cx}
+              y={effect.cy - 90}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fontSize={32}
+              initial={{ opacity: 0, y: effect.cy - 150 }}
+              animate={{ opacity: [0, 1, 1, 1], y: [effect.cy - 150, effect.cy - 90, effect.cy - 85, effect.cy - 90] }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1.5, ease: 'easeOut', times: [0, 0.3, 0.45, 0.6] }}
+            >
+              👑
+            </motion.text>
+            {/* Grand winner announcement */}
+            <motion.text
+              x={effect.cx}
+              y={effect.cy}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={effect.color}
+              fontSize={20}
+              fontWeight={900}
+              fontFamily="Nunito, sans-serif"
+              filter="url(#star-glow)"
+              initial={{ opacity: 0, scale: 0.3, y: effect.cy }}
+              animate={{ opacity: [0, 1, 1, 0], scale: [0.3, 1.2, 1.1, 0.9], y: effect.cy - 50 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 3, ease: 'easeOut', times: [0, 0.15, 0.5, 1] }}
+            >
+              🏆 {effect.emoji} {effect.playerName} Wins!
+            </motion.text>
+          </g>
+        ))}
+      </AnimatePresence>
+
+      {/* Token reached home celebration animation */}
+      <AnimatePresence>
+        {finishedEffects.map(effect => (
+          <g key={effect.id}>
+            {/* Golden expanding shockwave */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={0}
+              fill="none"
+              stroke="#f1c40f"
+              strokeWidth={3}
+              strokeOpacity={0.8}
+              initial={{ r: 0, opacity: 0.8 }}
+              animate={{ r: 80, opacity: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.8, ease: 'easeOut' }}
+            />
+            {/* Second golden ring */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={0}
+              fill="none"
+              stroke="#f1c40f"
+              strokeWidth={1.5}
+              strokeOpacity={0.5}
+              initial={{ r: 0, opacity: 0.5 }}
+              animate={{ r: 130, opacity: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1, ease: 'easeOut', delay: 0.15 }}
+            />
+            {/* Player-colored inner burst */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={15}
+              fill={effect.color}
+              initial={{ opacity: 0.6, scale: 0.2 }}
+              animate={{ opacity: 0, scale: 4 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.6, ease: 'easeOut' }}
+            />
+            {/* White flash */}
+            <motion.circle
+              cx={effect.cx}
+              cy={effect.cy}
+              r={10}
+              fill="#fff"
+              initial={{ opacity: 0.9, scale: 0.1 }}
+              animate={{ opacity: 0, scale: 2.5 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.35, ease: 'easeOut' }}
+            />
+            {/* Confetti particles flying outward (pre-computed for stable animation) */}
+            {effect.confetti.map((p, i) => (
+              <motion.circle
+                key={`conf-${i}`}
+                cx={effect.cx}
+                cy={effect.cy}
+                r={p.r}
+                fill={p.color}
+                initial={{ opacity: 1, x: 0, y: 0 }}
+                animate={{
+                  opacity: 0,
+                  x: Math.cos(p.angle) * p.dist,
+                  y: Math.sin(p.angle) * p.dist,
+                }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.8, ease: 'easeOut', delay: p.delay }}
+              />
+            ))}
+            {/* Rising star/sparkle (pre-computed for stable animation) */}
+            {effect.stars.map((s, i) => (
+              <motion.text
+                key={`star-${i}`}
+                x={effect.cx + s.x}
+                y={effect.cy}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize={s.fontSize}
+                initial={{ opacity: 1, y: effect.cy }}
+                animate={{ opacity: 0, y: effect.cy - 40 - i * 25 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 1, ease: 'easeOut', delay: 0.1 + i * 0.15 }}
+              >
+                {s.emoji}
+              </motion.text>
+            ))}
+            {/* Player announcement text rising and fading */}
+            <motion.text
+              x={effect.cx}
+              y={effect.cy}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill={effect.color}
+              fontSize={16}
+              fontWeight={900}
+              fontFamily="Nunito, sans-serif"
+              initial={{ opacity: 0, scale: 0.5, y: effect.cy + 10 }}
+              animate={{ opacity: [0, 1, 1, 0], scale: [0.5, 1.1, 1, 0.8], y: effect.cy - 40 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 1.8, ease: 'easeOut', times: [0, 0.15, 0.6, 1] }}
+            >
+              {effect.emoji} Token {effect.tokenNumber} Reached Home!
+            </motion.text>
+          </g>
+        ))}
+      </AnimatePresence>
 
       {/* Winner display */}
       {players.find(p => p.finished && p.tokens.every(t => tokenIsFinished(t, players.indexOf(p)))) && (

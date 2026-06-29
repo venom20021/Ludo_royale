@@ -1,156 +1,174 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
-
-const SOCKET_URL = import.meta.env.VITE_SERVER_URL || '';
+import useGameStore from '../stores/gameStore.js';
 
 export default function useSocket() {
-  const [socket, setSocket] = useState(null);
-  const [connected, setConnected] = useState(false);
-  const [room, setRoom] = useState(null);
-  const [playerIndex, setPlayerIndex] = useState(null);
-  const [playerId, setPlayerId] = useState(null);
-  const [roomId, setRoomId] = useState(null);
-  const [error, setError] = useState(null);
-  const [chatMessages, setChatMessages] = useState([]);
-  const [turnTimer, setTurnTimer] = useState(null);
   const socketRef = useRef(null);
+  const {
+    setConnected,
+    setPlayerIndex,
+    setPlayerId,
+    setRoomId,
+    setRoom,
+    setError,
+    addChatMessage,
+    setActiveScreen,
+    reset,
+    updateCoins,
+    addMatchToHistory,
+    username,
+    roomId,
+    playerIndex,
+  } = useGameStore();
 
+  // Connect
   useEffect(() => {
-    const s = io(SOCKET_URL, {
+    const s = io('/', {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
 
     socketRef.current = s;
 
     s.on('connect', () => {
       setConnected(true);
-      setError(null);
     });
 
     s.on('disconnect', () => {
       setConnected(false);
     });
 
-    s.on('connect_error', (err) => {
-      setError('Connection error: ' + err.message);
+    s.on('connect_error', () => {
+      setConnected(false);
     });
 
+    // Room joined — update store data but DON'T navigate (App.jsx handles navigation)
     s.on('room_joined', (data) => {
-      setRoomId(data.roomId);
       setPlayerIndex(data.playerIndex);
-      setRoom(data.room);
       if (data.room?.gameState?.players?.[data.playerIndex]) {
         setPlayerId(data.room.gameState.players[data.playerIndex].id);
       }
-      setError(null);
+      setRoomId(data.roomId);
+      setRoom(data.room);
     });
 
+    // Room update (from server's room_update) — when another player joins/leaves
     s.on('room_update', (data) => {
       setRoom(data.room);
     });
 
+    // Game started
     s.on('game_started', (data) => {
       setRoom(data.room);
     });
 
+    // Game state update — unwrap nested room object
     s.on('game_state_update', (data) => {
-      setRoom(data.room);
-      setTurnTimer(Date.now());
+      if (data.room) setRoom(data.room);
     });
 
-    s.on('game_over', (data) => {
-      setRoom(data.room);
-    });
-
-    s.on('chat_message', (data) => {
-      setChatMessages(prev => [...prev, data]);
-    });
-
-    s.on('player_disconnected', (data) => {
-      // Room update will handle state
-    });
-
+    // Error
     s.on('error', (data) => {
-      setError(data.message);
+      setError(data.message || 'An error occurred');
       setTimeout(() => setError(null), 3000);
     });
 
-    setSocket(s);
+    // Chat
+    s.on('chat_message', (data) => {
+      addChatMessage(data);
+    });
+
+    // Player disconnected
+    s.on('player_disconnected', (data) => {
+      setRoom(data.room);
+    });
+
+    // Player reaction
+    s.on('player_reaction', (data) => {
+      // Add to reaction queue in the store
+      const store = useGameStore.getState();
+      store.addReaction(data);
+      // Auto-remove after 2.5 seconds
+      setTimeout(() => {
+        useGameStore.getState().removeReaction(data.timestamp);
+      }, 2500);
+    });
+
+    // Game over (matches server's game_over event)
+    s.on('game_over', (data) => {
+      if (data.room) setRoom(data.room);
+      const winnerIdx = data.winner ?? data.room?.gameState?.winner;
+      const isWinner = winnerIdx === useGameStore.getState().playerIndex;
+      if (isWinner) {
+        updateCoins(500);
+      } else {
+        updateCoins(100);
+      }
+      addMatchToHistory({
+        id: Date.now(),
+        won: isWinner,
+        players: data.room?.gameState?.players?.length || 0,
+        date: new Date().toISOString(),
+      });
+    });
 
     return () => {
       s.disconnect();
+      socketRef.current = null;
     };
   }, []);
 
+  // Actions
   const createRoom = useCallback((playerName, maxPlayers = 6) => {
-    if (socketRef.current) {
-      socketRef.current.emit('create_room', { playerName, maxPlayers });
-    }
+    socketRef.current?.emit('create_room', { playerName, maxPlayers });
   }, []);
 
   const joinRoom = useCallback((roomId, playerName) => {
-    if (socketRef.current) {
-      socketRef.current.emit('join_room', { roomId, playerName });
-    }
-  }, []);
-
-  const startGame = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.emit('start_game');
-    }
-  }, []);
-
-  const rollDice = useCallback(() => {
-    if (socketRef.current) {
-      socketRef.current.emit('roll_dice');
-    }
-  }, []);
-
-  const moveToken = useCallback((tokenIdx) => {
-    if (socketRef.current) {
-      socketRef.current.emit('move_token', { tokenIdx });
-    }
-  }, []);
-
-  const sendMessage = useCallback((message) => {
-    if (socketRef.current) {
-      socketRef.current.emit('send_message', { message });
-    }
+    socketRef.current?.emit('join_room', { roomId, playerName });
   }, []);
 
   const leaveRoom = useCallback(() => {
-    setRoom(null);
-    setRoomId(null);
-    setPlayerIndex(null);
-    setPlayerId(null);
-    setChatMessages([]);
-    if (socketRef.current) {
-      socketRef.current.disconnect();
-      // Reconnect to be able to join another room
-      socketRef.current.connect();
-    }
+    socketRef.current?.emit('leave_room');
+    reset();
+    setActiveScreen('home');
+  }, [reset]);
+
+  const startGame = useCallback(() => {
+    socketRef.current?.emit('start_game');
   }, []);
 
+  const rollDice = useCallback(() => {
+    socketRef.current?.emit('roll_dice');
+  }, []);
+
+  const moveToken = useCallback((tokenIdx) => {
+    socketRef.current?.emit('move_token', { tokenIdx });
+  }, []);
+
+  const sendMessage = useCallback((message) => {
+    if (message.trim() && roomId) {
+      socketRef.current?.emit('chat_message', { roomId, message: message.trim() });
+    }
+  }, [roomId]);
+
+  const sendReaction = useCallback((emoji) => {
+    if (roomId) {
+      socketRef.current?.emit('send_reaction', { roomId, emoji });
+    }
+  }, [roomId]);
+
   return {
-    socket,
-    connected,
-    room,
-    playerIndex,
-    playerId,
-    roomId,
-    error,
-    chatMessages,
-    turnTimer,
+    socket: socketRef,
     createRoom,
     joinRoom,
+    leaveRoom,
     startGame,
     rollDice,
     moveToken,
     sendMessage,
-    leaveRoom,
-    setError,
+    sendReaction,
   };
 }

@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   PLAYER_COLORS,
-  PLAYER_NAMES,
   TOKENS_PER_PLAYER,
   tokenIsHome,
   tokenIsOnTrack,
@@ -16,7 +15,7 @@ export default function PlayerPanel({
   diceValue,
   turnPhase,
 }) {
-  const getTokenStatus = (pos, pIdx) => {
+  const getTokenStatusIcon = (pos, pIdx) => {
     if (tokenIsHome(pos)) return '🏠';
     if (tokenIsOnTrack(pos)) return '📍';
     if (tokenIsOnHomeStretch(pos, pIdx)) return '🏁';
@@ -35,8 +34,9 @@ export default function PlayerPanel({
         fontWeight: 700,
         textTransform: 'uppercase',
         letterSpacing: 1.5,
-        color: '#666',
+        color: 'rgba(255,255,255,0.3)',
         marginBottom: 4,
+        padding: '0 4px',
       }}>
         Players
       </div>
@@ -45,26 +45,29 @@ export default function PlayerPanel({
         const color = player.color || PLAYER_COLORS[player.colorIndex];
         const isCurrent = pIdx === currentPlayerIndex;
         const isMe = pIdx === playerIndex;
-        const activeTokens = player.tokens.filter(t => !tokenIsHome(t) && !tokenIsFinished(t, pIdx)).length;
-        const finishedTokens = player.tokens.filter(t => tokenIsFinished(t, pIdx)).length;
+        const homeCount = player.tokens.filter(t => tokenIsHome(t)).length;
+        const trackCount = player.tokens.filter(t => tokenIsOnTrack(t)).length;
+        const hsCount = player.tokens.filter(t => tokenIsOnHomeStretch(t, pIdx)).length;
+        const finishedCount = player.tokens.filter(t => tokenIsFinished(t, pIdx)).length;
+        const progressPercent = (finishedCount / TOKENS_PER_PLAYER) * 100;
 
         return (
           <div
             key={pIdx}
             style={{
-              padding: '10px 14px',
+              padding: '12px 14px',
               borderRadius: 12,
               background: isCurrent
-                ? `linear-gradient(135deg, ${color}22, ${color}11)`
-                : 'rgba(255,255,255,0.03)',
-              border: `1px solid ${isCurrent ? color + '44' : 'rgba(255,255,255,0.06)'}`,
-              transition: 'all 0.3s',
+                ? `linear-gradient(135deg, ${color}18, ${color}08)`
+                : 'rgba(255,255,255,0.02)',
+              border: `1px solid ${isCurrent ? color + '33' : 'rgba(255,255,255,0.05)'}`,
+              transition: 'all 0.3s ease',
               opacity: player.finished ? 0.5 : 1,
               position: 'relative',
               overflow: 'hidden',
             }}
           >
-            {/* Active turn indicator */}
+            {/* Active turn indicator bar */}
             {isCurrent && (
               <div style={{
                 position: 'absolute',
@@ -72,10 +75,30 @@ export default function PlayerPanel({
                 top: 0,
                 bottom: 0,
                 width: 3,
-                background: color,
+                background: `linear-gradient(180deg, ${color}, ${color}88)`,
                 boxShadow: `0 0 8px ${color}`,
+                borderRadius: '0 2px 2px 0',
               }} />
             )}
+
+            {/* Progress bar */}
+            <div style={{
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              height: 3,
+              background: 'rgba(255,255,255,0.04)',
+            }}>
+              <div style={{
+                height: '100%',
+                width: `${progressPercent}%`,
+                background: `linear-gradient(90deg, ${color}66, ${color})`,
+                borderRadius: '0 2px 0 0',
+                transition: 'width 0.5s ease',
+                boxShadow: progressPercent > 0 ? `0 0 6px ${color}` : 'none',
+              }} />
+            </div>
 
             <div style={{
               display: 'flex',
@@ -88,59 +111,106 @@ export default function PlayerPanel({
                 alignItems: 'center',
                 gap: 8,
               }}>
-                <span style={{ fontSize: 18 }}>{player.emoji}</span>
+                <span style={{
+                  fontSize: 18,
+                  filter: isCurrent ? 'none' : 'grayscale(0.3)',
+                }}>
+                  {player.emoji}
+                </span>
                 <div>
                   <div style={{
                     fontSize: 14,
                     fontWeight: 700,
-                    color: isMe ? color : '#ccc',
+                    color: isMe ? color : isCurrent ? '#eee' : 'rgba(255,255,255,0.6)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
                   }}>
                     {player.name}
-                    {isMe && <span style={{ fontSize: 10, color: '#888', marginLeft: 4 }}>(You)</span>}
+                    {isMe && <span style={{
+                      fontSize: 9,
+                      fontWeight: 800,
+                      color: color,
+                      background: `${color}22`,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      letterSpacing: 0.5,
+                    }}>YOU</span>}
                   </div>
                   <div style={{
                     fontSize: 11,
-                    color: '#666',
+                    color: 'rgba(255,255,255,0.3)',
                     marginTop: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
                   }}>
-                    {finishedTokens}/{TOKENS_PER_PLAYER} home
-                    {!player.connected && <span style={{ color: '#e74c3c', marginLeft: 6 }}>❌ Disconnected</span>}
+                    <span>🏠 {finishedCount}/{TOKENS_PER_PLAYER} home</span>
+                    {!player.connected && (
+                      <span style={{ color: '#ff6b6b' }}>❌ Disconnected</span>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Token status */}
+              {/* Token status indicators */}
               <div style={{
                 display: 'flex',
-                gap: 3,
+                gap: 4,
                 alignItems: 'center',
               }}>
-                {player.tokens.map((pos, tIdx) => (
-                  <span
-                    key={tIdx}
-                    style={{
-                      fontSize: 11,
-                      opacity: tokenIsFinished(pos, pIdx) ? 0.5 : 1,
-                      filter: tokenIsFinished(pos, pIdx) ? 'grayscale(0.5)' : 'none',
-                    }}
-                    title={`Token ${tIdx + 1}: ${getTokenStatus(pos, pIdx)}`}
-                  >
-                    {getTokenStatus(pos, pIdx)}
-                  </span>
-                ))}
+                {player.tokens.map((pos, tIdx) => {
+                  const isDone = tokenIsFinished(pos, pIdx);
+                  return (
+                    <span
+                      key={tIdx}
+                      style={{
+                        fontSize: 12,
+                        opacity: isDone ? 0.4 : 0.8,
+                        filter: isDone ? 'grayscale(0.5)' : 'none',
+                        transition: 'all 0.3s',
+                      }}
+                      title={`Token ${tIdx + 1}: ${getTokenStatusIcon(pos, pIdx)}`}
+                    >
+                      {isDone ? '✅' : '⚪'}
+                    </span>
+                  );
+                })}
               </div>
             </div>
+
+            {/* Token phase breakdown */}
+            {isCurrent && (
+              <div style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                fontSize: 11,
+                color: 'rgba(255,255,255,0.35)',
+              }}>
+                <span>🏠 {homeCount}</span>
+                <span>📍 {trackCount}</span>
+                <span>🏁 {hsCount}</span>
+                <span>✅ {finishedCount}</span>
+              </div>
+            )}
 
             {/* Active player dice info */}
             {isCurrent && diceValue !== null && (
               <div style={{
                 marginTop: 6,
+                padding: '6px 10px',
+                background: `${color}15`,
+                borderRadius: 8,
                 fontSize: 12,
-                fontWeight: 600,
-                color,
+                fontWeight: 700,
+                color: color,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
               }}>
                 🎲 Rolled: {diceValue}
-                {turnPhase === 'move' && ' — Move a token!'}
+                {turnPhase === 'move' && <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.7 }}>Move a token!</span>}
               </div>
             )}
 
@@ -149,10 +219,13 @@ export default function PlayerPanel({
               <div style={{
                 position: 'absolute',
                 top: 8,
-                right: 8,
-                fontSize: 10,
-                color,
+                right: 10,
+                fontSize: 9,
+                color: color,
                 fontWeight: 800,
+                fontFamily: "'Fredoka One', cursive",
+                letterSpacing: 1,
+                opacity: 0.8,
               }}>
                 ● TURN
               </div>
