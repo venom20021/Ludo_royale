@@ -4,7 +4,6 @@ import {
   HOME_STRETCH_LENGTH,
   TOKENS_PER_PLAYER,
   PLAYER_COLORS,
-  PLAYER_COLORS_LIGHT,
   BOARD_SIZE,
   BOARD_CENTER,
   tokenIsHome,
@@ -19,6 +18,9 @@ import {
   HOME_ENTRY,
 } from '../constants.js';
 
+const GLOW_FILTER_ID = 'board-glow';
+const TOKEN_FILTER_ID = 'token-shadow';
+
 export default function Board({
   players,
   currentPlayerIndex,
@@ -28,35 +30,33 @@ export default function Board({
   onTokenClick,
   selectableTokens,
 }) {
-  const trackCells = useMemo(() => getTrackCellPositions(250), []);
-  const hexVertices = useMemo(() => getHexVertices(330), []);
+  const trackCells = useMemo(() => getTrackCellPositions(240), []);
+  const hexVertices = useMemo(() => getHexVertices(320), []);
+  const outerHex = useMemo(() => getHexVertices(430), []);
 
-  // Check if token is clickable
   const isTokenSelectable = (pIdx, tIdx) => {
     return selectableTokens && selectableTokens.some(
       s => s.playerIdx === pIdx && s.tokenIdx === tIdx
     );
   };
 
-  // Get ring highlight color for a track position
   const getTrackCellColor = (pos) => {
-    // Color the cells near each player's start position
     for (let i = 0; i < 6; i++) {
       const start = START_POS[i];
       const end = (start + 2) % TRACK_SIZE;
       if (pos === start || pos === (start + 1) % TRACK_SIZE || pos === (start + 2) % TRACK_SIZE) {
-        return PLAYER_COLORS_LIGHT[players[i]?.colorIndex ?? i];
+        const color = players[i]?.color || PLAYER_COLORS[players[i]?.colorIndex ?? i];
+        return color;
       }
-      // Also color around home entry
       const entry = HOME_ENTRY[i];
       if (pos === entry || pos === (entry - 1 + TRACK_SIZE) % TRACK_SIZE) {
-        return PLAYER_COLORS_LIGHT[players[i]?.colorIndex ?? i];
+        const color = players[i]?.color || PLAYER_COLORS[players[i]?.colorIndex ?? i];
+        return color;
       }
     }
-    return 'rgba(200, 200, 200, 0.15)';
+    return null;
   };
 
-  // Get relative position of a player's home base area
   const getHomeBase = (pIdx) => {
     const angle = (Math.PI / 2) - (pIdx * Math.PI / 3);
     const radius = 330;
@@ -66,7 +66,248 @@ export default function Board({
     };
   };
 
-  // Render home base areas (colored zones with token starting positions)
+  // Check if a track cell belongs to a player's starting zone (3 exit cells)
+  const getPlayerZoneIndex = (pos) => {
+    for (let i = 0; i < 6; i++) {
+      const start = START_POS[i];
+      const end = (start + 2) % TRACK_SIZE;
+      if (pos === start || pos === (start + 1) % TRACK_SIZE || pos === (start + 2) % TRACK_SIZE) {
+        return i;
+      }
+      const entry = HOME_ENTRY[i];
+      if (pos === entry || pos === (entry - 1 + TRACK_SIZE) % TRACK_SIZE) {
+        return i;
+      }
+    }
+    return -1;
+  };
+
+  const renderSVGFilters = () => (
+    <defs>
+      <filter id={GLOW_FILTER_ID} x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="3" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+      <filter id={TOKEN_FILTER_ID} x="-30%" y="-30%" width="160%" height="160%">
+        <feDropShadow dx="1" dy="2" stdDeviation="2" floodOpacity="0.35" />
+      </filter>
+      <filter id="star-glow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="1.5" result="blur" />
+        <feMerge>
+          <feMergeNode in="blur" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+      <filter id="inner-shadow" x="-10%" y="-10%" width="120%" height="120%">
+        <feGaussianBlur in="SourceAlpha" stdDeviation="8" result="blur" />
+        <feOffset dx="0" dy="4" />
+        <feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadow-diff" />
+        <feFlood floodColor="#000" floodOpacity="0.35" />
+        <feComposite in2="shadow-diff" operator="in" />
+        <feComposite in2="SourceGraphic" operator="over" />
+      </filter>
+
+      {/* Arm zone gradients - colored wedges from center */}
+      {players.map((player, pIdx) => {
+        const color = player.color || PLAYER_COLORS[player.colorIndex];
+        return (
+          <radialGradient key={`arm-grad-${pIdx}`} id={`arm-grad-${pIdx}`} cx="50%" cy="50%" r="70%">
+            <stop offset="30%" stopColor={color} stopOpacity="0.18" />
+            <stop offset="70%" stopColor={color} stopOpacity="0.08" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </radialGradient>
+        );
+      })}
+
+      {/* Home base gradients */}
+      {players.map((player, pIdx) => {
+        const color = player.color || PLAYER_COLORS[player.colorIndex];
+        return (
+          <linearGradient key={`home-top-${pIdx}`} id={`home-top-${pIdx}`} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.08" />
+          </linearGradient>
+        );
+      })}
+
+      {/* Token gradients */}
+      {players.map((player, pIdx) => {
+        const color = player.color || PLAYER_COLORS[player.colorIndex];
+        return (
+          <radialGradient key={`token-grad-${pIdx}`} id={`token-grad-${pIdx}`} cx="38%" cy="32%" r="65%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.35" />
+            <stop offset="25%" stopColor={color} stopOpacity="0.85" />
+            <stop offset="100%" stopColor={color} stopOpacity="1" />
+          </radialGradient>
+        );
+      })}
+    </defs>
+  );
+
+  const renderArmZones = () => {
+    return players.map((player, pIdx) => {
+      const v1 = hexVertices[pIdx];
+      const v2 = hexVertices[(pIdx + 1) % 6];
+      const points = `${BOARD_CENTER.x},${BOARD_CENTER.y} ${v1.x},${v1.y} ${v2.x},${v2.y}`;
+      return (
+        <polygon
+          key={`arm-${pIdx}`}
+          points={points}
+          fill={`url(#arm-grad-${pIdx})`}
+        />
+      );
+    });
+  };
+
+  const renderWoodFrame = () => {
+    return (
+      <g>
+        {/* Outer wood frame */}
+        <rect
+          x={-10}
+          y={-10}
+          width={BOARD_SIZE + 20}
+          height={BOARD_SIZE + 20}
+          rx={24}
+          fill="#5c3d2e"
+        />
+        {/* Frame inner edge */}
+        <rect
+          x={-2}
+          y={-2}
+          width={BOARD_SIZE + 4}
+          height={BOARD_SIZE + 4}
+          rx={22}
+          fill="none"
+          stroke="#3d2518"
+          strokeWidth={4}
+        />
+        {/* Frame bevel */}
+        <rect
+          x={2}
+          y={2}
+          width={BOARD_SIZE - 4}
+          height={BOARD_SIZE - 4}
+          rx={20}
+          fill="none"
+          stroke="#7a5240"
+          strokeWidth={1}
+          opacity={0.5}
+        />
+        {/* Green felt edge visible inside frame */}
+        <rect
+          x={8}
+          y={8}
+          width={BOARD_SIZE - 16}
+          height={BOARD_SIZE - 16}
+          rx={18}
+          fill="#2d5a27"
+          opacity={0.5}
+        />
+        {/* Cream board surface */}
+        <rect
+          x={18}
+          y={18}
+          width={BOARD_SIZE - 36}
+          height={BOARD_SIZE - 36}
+          rx={16}
+          fill="#f0e6d3"
+        />
+        {/* Board surface inner shadow */}
+        <ellipse
+          cx={BOARD_CENTER.x}
+          cy={BOARD_CENTER.y}
+          rx={380}
+          ry={380}
+          fill="none"
+          stroke="#d4c9b0"
+          strokeWidth={2}
+          opacity={0.6}
+        />
+      </g>
+    );
+  };
+
+  const renderCenter = () => {
+    const centerR = 55;
+    const innerR = 22;
+
+    return (
+      <g>
+        {/* Center white circle */}
+        <circle
+          cx={BOARD_CENTER.x}
+          cy={BOARD_CENTER.y}
+          r={centerR}
+          fill="#f5efe0"
+          stroke="#c4b99e"
+          strokeWidth={1.5}
+        />
+
+        {/* 6 colored triangles in the center */}
+        {players.map((player, pIdx) => {
+          const angle1 = (Math.PI / 2) - (pIdx * Math.PI / 3);
+          const angle2 = (Math.PI / 2) - ((pIdx + 1) * Math.PI / 3);
+          const color = player.color || PLAYER_COLORS[player.colorIndex];
+          const pts = [
+            `${BOARD_CENTER.x + innerR * Math.cos(angle1)},${BOARD_CENTER.y - innerR * Math.sin(angle1)}`,
+            `${BOARD_CENTER.x},${BOARD_CENTER.y}`,
+            `${BOARD_CENTER.x + innerR * Math.cos(angle2)},${BOARD_CENTER.y - innerR * Math.sin(angle2)}`,
+            `${BOARD_CENTER.x + centerR * 0.7 * Math.cos((angle1 + angle2) / 2)},${BOARD_CENTER.y - centerR * 0.7 * Math.sin((angle1 + angle2) / 2)}`,
+          ];
+          return (
+            <polygon
+              key={`center-tri-${pIdx}`}
+              points={pts.join(' ')}
+              fill={color}
+              fillOpacity={0.25}
+              stroke={color}
+              strokeWidth={0.5}
+              strokeOpacity={0.4}
+            />
+          );
+        })}
+
+        {/* Center inner hexagon with trophy */}
+        <polygon
+          points={
+            Array.from({ length: 6 }, (_, i) => {
+              const angle = (Math.PI / 2) - (i * Math.PI / 3);
+              return `${BOARD_CENTER.x + innerR * Math.cos(angle)},${BOARD_CENTER.y - innerR * Math.sin(angle)}`;
+            }).join(' ')
+          }
+          fill="rgba(255,255,255,0.6)"
+          stroke="#c4b99e"
+          strokeWidth={1}
+        />
+
+        <text
+          x={BOARD_CENTER.x}
+          y={BOARD_CENTER.y + 1}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fontSize={18}
+        >
+          🏆
+        </text>
+
+        {/* Center ring */}
+        <circle
+          cx={BOARD_CENTER.x}
+          cy={BOARD_CENTER.y}
+          r={centerR}
+          fill="none"
+          stroke="#c4b99e"
+          strokeWidth={1}
+          opacity={0.5}
+        />
+      </g>
+    );
+  };
+
   const renderHomeBases = () => {
     return players.map((player, pIdx) => {
       const base = getHomeBase(pIdx);
@@ -74,38 +315,75 @@ export default function Board({
       const isCurrent = pIdx === currentPlayerIndex;
       const color = player.color || PLAYER_COLORS[player.colorIndex];
 
+      // For the home base square, compute a bounding box around the 4 token positions
+      const tokenSize = 28;
+      const padding = 18;
+      const minX = Math.min(...positions.map(p => p.x)) - tokenSize - padding;
+      const maxX = Math.max(...positions.map(p => p.x)) + tokenSize + padding;
+      const minY = Math.min(...positions.map(p => p.y)) - tokenSize - padding;
+      const maxY = Math.max(...positions.map(p => p.y)) + tokenSize + padding;
+      const hbW = maxX - minX;
+      const hbH = maxY - minY;
+
       return (
         <g key={`home-${pIdx}`}>
-          {/* Home base circle */}
-          <circle
-            cx={base.x}
-            cy={base.y}
-            r={55}
-            fill={color}
-            fillOpacity={0.15}
-            stroke={isCurrent ? color : 'rgba(255,255,255,0.2)'}
+          {/* Home base rounded rectangle (yard) */}
+          <rect
+            x={minX}
+            y={minY}
+            width={hbW}
+            height={hbH}
+            rx={12}
+            fill={`url(#home-top-${pIdx})`}
+            stroke={isCurrent ? color : 'rgba(0,0,0,0.08)'}
             strokeWidth={isCurrent ? 2.5 : 1}
-            strokeDasharray={isCurrent ? 'none' : '4 4'}
+            fillOpacity={0.9}
           />
-          <circle
-            cx={base.x}
-            cy={base.y}
-            r={45}
-            fill={color}
-            fillOpacity={0.08}
-            stroke={isCurrent ? color : 'rgba(255,255,255,0.15)'}
-            strokeWidth={1}
+          {/* Inner border */}
+          <rect
+            x={minX + 4}
+            y={minY + 4}
+            width={hbW - 8}
+            height={hbH - 8}
+            rx={9}
+            fill="none"
+            stroke={color}
+            strokeWidth={0.5}
+            strokeOpacity={0.2}
           />
 
-          {/* Player name label */}
+          {/* Grid lines (dashed) inside yard */}
+          <line
+            x1={minX + 6}
+            y1={minY + hbH / 2}
+            x2={maxX - 6}
+            y2={minY + hbH / 2}
+            stroke={color}
+            strokeWidth={0.5}
+            strokeOpacity={0.15}
+            strokeDasharray="3 3"
+          />
+          <line
+            x1={minX + hbW / 2}
+            y1={minY + 6}
+            x2={minX + hbW / 2}
+            y2={maxY - 6}
+            stroke={color}
+            strokeWidth={0.5}
+            strokeOpacity={0.15}
+            strokeDasharray="3 3"
+          />
+
+          {/* Player label */}
           <text
             x={base.x}
-            y={base.y - 48}
+            y={minY - 14}
             textAnchor="middle"
             fill={color}
             fontSize={11}
-            fontWeight={700}
+            fontWeight={800}
             fontFamily="Nunito, sans-serif"
+            opacity={0.9}
           >
             {player.emoji} {player.name}
           </text>
@@ -121,17 +399,46 @@ export default function Board({
               <g key={`slot-${pIdx}-${tIdx}`}>
                 {/* Empty slot */}
                 {tokenAtHome && !isSelectable && (
-                  <circle
-                    cx={pos.x}
-                    cy={pos.y}
-                    r={12}
-                    fill="rgba(255,255,255,0.05)"
-                    stroke="rgba(255,255,255,0.1)"
-                    strokeWidth={1}
+                  <>
+                    <rect
+                      x={pos.x - 13}
+                      y={pos.y - 13}
+                      width={26}
+                      height={26}
+                      rx={6}
+                      fill="rgba(0,0,0,0.04)"
+                      stroke="rgba(0,0,0,0.1)"
+                      strokeWidth={0.5}
+                      strokeDasharray="2 2"
+                    />
+                    <text
+                      x={pos.x}
+                      y={pos.y + 1}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="rgba(0,0,0,0.15)"
+                      fontSize={9}
+                      fontWeight={700}
+                    >
+                      {tIdx + 1}
+                    </text>
+                  </>
+                )}
+                {/* Token on home - idle */}
+                {!tokenAtHome && !isFinished && (
+                  <rect
+                    x={pos.x - 13}
+                    y={pos.y - 13}
+                    width={26}
+                    height={26}
+                    rx={6}
+                    fill="rgba(0,0,0,0.02)"
+                    stroke="rgba(0,0,0,0.05)"
+                    strokeWidth={0.5}
                     strokeDasharray="2 2"
                   />
                 )}
-                {/* Token on home base */}
+                {/* Token present in yard */}
                 {tokenAtHome && isSelectable && (
                   <g
                     onClick={() => onTokenClick?.(pIdx, tIdx)}
@@ -141,52 +448,88 @@ export default function Board({
                       cx={pos.x}
                       cy={pos.y}
                       r={14}
-                      fill={color}
+                      fill={`url(#token-grad-${pIdx})`}
                       stroke="#fff"
-                      strokeWidth={2}
-                      opacity={0.9}
+                      strokeWidth={2.5}
+                      filter={`url(#${GLOW_FILTER_ID})`}
                     />
                     <circle
                       cx={pos.x}
                       cy={pos.y}
-                      r={16}
+                      r={17}
                       fill="none"
                       stroke="rgba(255,255,255,0.6)"
                       strokeWidth={2}
-                      opacity={0.6}
                     >
                       <animate
                         attributeName="r"
-                        values="16;19;16"
-                        dur="1.5s"
+                        values="17;21;17"
+                        dur="1.2s"
                         repeatCount="indefinite"
                       />
                       <animate
                         attributeName="opacity"
-                        values="0.6;0.2;0.6"
-                        dur="1.5s"
+                        values="0.6;0.1;0.6"
+                        dur="1.2s"
                         repeatCount="indefinite"
                       />
                     </circle>
+                    <circle
+                      cx={pos.x - 3}
+                      cy={pos.y - 3}
+                      r={5}
+                      fill="rgba(255,255,255,0.4)"
+                    />
                     <text
                       x={pos.x}
                       y={pos.y + 1}
                       textAnchor="middle"
                       dominantBaseline="middle"
                       fill="#fff"
-                      fontSize={12}
+                      fontSize={11}
                       fontWeight={800}
                     >
                       {tIdx + 1}
                     </text>
                   </g>
                 )}
-                {/* Finished tokens */}
+                {tokenAtHome && !isSelectable && (
+                  <g>
+                    <circle
+                      cx={pos.x}
+                      cy={pos.y}
+                      r={11}
+                      fill={`url(#token-grad-${pIdx})`}
+                      stroke="rgba(255,255,255,0.25)"
+                      strokeWidth={1.5}
+                      filter={`url(#${TOKEN_FILTER_ID})`}
+                      opacity={0.75}
+                    />
+                    <circle
+                      cx={pos.x - 2}
+                      cy={pos.y - 2}
+                      r={4}
+                      fill="rgba(255,255,255,0.25)"
+                    />
+                    <text
+                      x={pos.x}
+                      y={pos.y + 1}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="#fff"
+                      fontSize={9}
+                      fontWeight={800}
+                    >
+                      {tIdx + 1}
+                    </text>
+                  </g>
+                )}
+                {/* Finished token indicator */}
                 {isFinished && (
                   <circle
                     cx={pos.x}
                     cy={pos.y}
-                    r={10}
+                    r={8}
                     fill={color}
                     opacity={0.3}
                   />
@@ -199,11 +542,12 @@ export default function Board({
           {player.tokens.filter(t => tokenIsFinished(t, pIdx)).length > 0 && (
             <text
               x={base.x}
-              y={base.y + 58}
+              y={maxY + 18}
               textAnchor="middle"
               fill={color}
               fontSize={12}
-              fontWeight={600}
+              fontWeight={700}
+              opacity={0.8}
             >
               ✅ {player.tokens.filter(t => tokenIsFinished(t, pIdx)).length}/{TOKENS_PER_PLAYER}
             </text>
@@ -213,50 +557,87 @@ export default function Board({
     });
   };
 
-  // Render the main track cells
   const renderTrack = () => {
     return trackCells.map((cell, idx) => {
       const isStart = START_POS.includes(idx);
       const isSafe = [0, 10, 20, 30, 40, 50, 5, 15, 25, 35, 45, 55].includes(idx);
-      const radius = isStart ? 10 : isSafe ? 9 : 8;
+      const zoneIdx = getPlayerZoneIndex(idx);
+      const zoneColor = zoneIdx >= 0 ? (players[zoneIdx]?.color || PLAYER_COLORS[players[zoneIdx]?.colorIndex ?? zoneIdx]) : null;
+      const size = 17;
+      const halfSize = size / 2;
+
+      // Determine cell background
+      let bgFill = '#faf6ed';
+      let borderColor = '#d4c9b0';
+      let borderWidth = 0.5;
+      let cellOpacity = 0.85;
+
+      if (zoneColor) {
+        bgFill = zoneColor;
+        cellOpacity = isStart ? 0.25 : 0.12;
+        if (isStart) {
+          borderColor = zoneColor;
+          borderWidth = 1.5;
+        }
+      }
 
       return (
         <g key={`track-${idx}`}>
           {/* Cell background */}
           <rect
-            x={cell.x - radius}
-            y={cell.y - radius}
-            width={radius * 2}
-            height={radius * 2}
+            x={cell.x - halfSize}
+            y={cell.y - halfSize}
+            width={size}
+            height={size}
             rx={3}
-            fill={getTrackCellColor(idx)}
-            stroke={isStart ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.08)'}
-            strokeWidth={isStart ? 1.5 : 0.5}
+            fill={zoneColor || '#faf6ed'}
+            fillOpacity={cellOpacity}
+            stroke={borderColor}
+            strokeWidth={borderWidth}
+            strokeOpacity={zoneColor ? 0.6 : 0.4}
           />
-          {/* Safe spot marker */}
-          {isSafe && (
+
+          {/* Inner border for colored zones */}
+          {zoneColor && (
+            <rect
+              x={cell.x - halfSize + 2}
+              y={cell.y - halfSize + 2}
+              width={size - 4}
+              height={size - 4}
+              rx={2}
+              fill="none"
+              stroke={zoneColor}
+              strokeWidth={0.5}
+              strokeOpacity={0.15}
+            />
+          )}
+
+          {/* Star marker - Start positions get gold stars */}
+          {isStart && (
             <text
               x={cell.x}
               y={cell.y + 1}
               textAnchor="middle"
               dominantBaseline="middle"
-              fill="rgba(255,255,255,0.3)"
-              fontSize={8}
+              fill={zoneColor || '#f1c40f'}
+              fontSize={9}
+              filter="url(#star-glow)"
             >
               ⭐
             </text>
           )}
-          {/* Position number (small) */}
-          {idx % 5 === 0 && (
+
+          {/* Star marker - Safe spots */}
+          {isSafe && !isStart && (
             <text
               x={cell.x}
-              y={cell.y + radius + 12}
+              y={cell.y + 1}
               textAnchor="middle"
-              fill="rgba(255,255,255,0.15)"
+              dominantBaseline="middle"
+              fill="rgba(0,0,0,0.15)"
               fontSize={7}
-              fontFamily="monospace"
             >
-              {idx}
+              ⭐
             </text>
           )}
         </g>
@@ -264,12 +645,11 @@ export default function Board({
     });
   };
 
-  // Render tokens on the board
   const renderTokens = () => {
     return players.map((player, pIdx) => {
       return player.tokens.map((pos, tIdx) => {
-        if (tokenIsHome(pos)) return null; // Rendered in home base
-        if (tokenIsFinished(pos, pIdx)) return null; // Rendered in home base
+        if (tokenIsHome(pos)) return null;
+        if (tokenIsFinished(pos, pIdx)) return null;
 
         const color = player.color || PLAYER_COLORS[player.colorIndex];
         const isSelectable = isTokenSelectable(pIdx, tIdx);
@@ -288,7 +668,7 @@ export default function Board({
           return null;
         }
 
-        const tokenRadius = isSelectable ? 12 : 10;
+        const radius = isSelectable ? 11 : 9;
 
         return (
           <g
@@ -296,30 +676,42 @@ export default function Board({
             onClick={() => isSelectable && onTokenClick?.(pIdx, tIdx)}
             style={{ cursor: isSelectable ? 'pointer' : 'default' }}
           >
-            {/* Token shadow */}
+            {/* Shadow */}
             <circle
-              cx={x + 1}
-              cy={y + 1}
-              r={tokenRadius}
+              cx={x + 1.5}
+              cy={y + 2}
+              r={radius}
               fill="rgba(0,0,0,0.3)"
+              filter={`url(#${TOKEN_FILTER_ID})`}
             />
+
             {/* Token body */}
             <circle
               cx={x}
               cy={y}
-              r={tokenRadius}
-              fill={color}
-              stroke={isSelectable ? '#fff' : 'rgba(255,255,255,0.4)'}
+              r={radius}
+              fill={`url(#token-grad-${pIdx})`}
+              stroke={isSelectable ? '#fff' : 'rgba(255,255,255,0.35)'}
               strokeWidth={isSelectable ? 2.5 : 1.5}
-              opacity={0.95}
-            />
-            {/* Token highlight */}
+            >
+              {isSelectable && (
+                <animate
+                  attributeName="r"
+                  values={`${radius};${radius + 2};${radius}`}
+                  dur="1.2s"
+                  repeatCount="indefinite"
+                />
+              )}
+            </circle>
+
+            {/* Specular highlight */}
             <circle
-              cx={x - 2}
-              cy={y - 2}
-              r={tokenRadius * 0.35}
-              fill="rgba(255,255,255,0.3)"
+              cx={x - 2.5}
+              cy={y - 2.5}
+              r={radius * 0.35}
+              fill="rgba(255,255,255,0.35)"
             />
+
             {/* Token number */}
             <text
               x={x}
@@ -327,32 +719,32 @@ export default function Board({
               textAnchor="middle"
               dominantBaseline="middle"
               fill="#fff"
-              fontSize={isSelectable ? 12 : 10}
+              fontSize={isSelectable ? 10 : 8}
               fontWeight={800}
               fontFamily="sans-serif"
             >
               {tIdx + 1}
             </text>
-            {/* Selection glow */}
+
+            {/* Selection ring */}
             {isSelectable && (
               <circle
                 cx={x}
                 cy={y}
-                r={tokenRadius + 4}
+                r={radius + 6}
                 fill="none"
                 stroke="rgba(255,255,255,0.8)"
                 strokeWidth={2}
-                opacity={0.6}
               >
                 <animate
                   attributeName="r"
-                  values={`${tokenRadius + 4};${tokenRadius + 8};${tokenRadius + 4}`}
+                  values={`${radius + 6};${radius + 10};${radius + 6}`}
                   dur="1s"
                   repeatCount="indefinite"
                 />
                 <animate
                   attributeName="opacity"
-                  values="0.6;0.1;0.6"
+                  values="0.8;0.15;0.8"
                   dur="1s"
                   repeatCount="indefinite"
                 />
@@ -364,7 +756,6 @@ export default function Board({
     });
   };
 
-  // Render home stretches
   const renderHomeStretches = () => {
     return players.map((player, pIdx) => {
       const hsPositions = getHomeStretchPositions(pIdx);
@@ -372,135 +763,127 @@ export default function Board({
       const entry = HOME_ENTRY[pIdx];
       const entryCell = trackCells[entry];
 
-      // Home stretch entry marker
       return (
         <g key={`hs-${pIdx}`}>
-          {/* Path from entry to home stretch */}
+          {/* Home stretch path background */}
           <line
             x1={entryCell.x}
             y1={entryCell.y}
             x2={BOARD_CENTER.x}
             y2={BOARD_CENTER.y}
             stroke={color}
-            strokeWidth={1.5}
-            strokeOpacity={0.15}
-            strokeDasharray="4 4"
+            strokeWidth={20}
+            strokeOpacity={0.1}
           />
+          <line
+            x1={entryCell.x}
+            y1={entryCell.y}
+            x2={BOARD_CENTER.x}
+            y2={BOARD_CENTER.y}
+            stroke={color}
+            strokeWidth={2}
+            strokeOpacity={0.2}
+            strokeDasharray="4 5"
+          />
+
           {/* Home stretch cells */}
-          {hsPositions.map((pos, i) => (
-            <rect
-              key={`hs-cell-${pIdx}-${i}`}
-              x={pos.x - 7}
-              y={pos.y - 7}
-              width={14}
-              height={14}
-              rx={3}
-              fill={color}
-              fillOpacity={i === 0 ? 0.15 : 0.08}
-              stroke={color}
-              strokeWidth={0.5}
-              strokeOpacity={0.3}
-            />
-          ))}
-          {/* Home stretch label */}
+          {hsPositions.map((pos, i) => {
+            const cellSize = i === 0 ? 13 : 12;
+
+            return (
+              <g key={`hs-cell-${pIdx}-${i}`}>
+                <rect
+                  x={pos.x - cellSize / 2}
+                  y={pos.y - cellSize / 2}
+                  width={cellSize}
+                  height={cellSize}
+                  rx={2}
+                  fill={color}
+                  fillOpacity={i === 0 ? 0.2 : 0.12}
+                  stroke={color}
+                  strokeWidth={0.5}
+                  strokeOpacity={0.3}
+                />
+                <text
+                  x={pos.x}
+                  y={pos.y + 1}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={color}
+                  fontSize={5.5}
+                  opacity={0.4}
+                  fontWeight={600}
+                >
+                  {i + 1}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Entry arrow */}
           <text
-            x={BOARD_CENTER.x - 5}
-            y={BOARD_CENTER.y + 2}
-            textAnchor="end"
+            x={(entryCell.x + BOARD_CENTER.x) / 2}
+            y={(entryCell.y + BOARD_CENTER.y) / 2}
+            textAnchor="middle"
             dominantBaseline="middle"
             fill={color}
             fontSize={8}
-            opacity={0.4}
+            opacity={0.2}
           >
-            {player.emoji}
+            ▶
           </text>
         </g>
       );
     });
   };
 
-  // Render center area
-  const renderCenter = () => {
-    return (
-      <g>
-        {/* Center hexagon */}
-        <polygon
-          points={
-            Array.from({ length: 6 }, (_, i) => {
-              const angle = (Math.PI / 2) - (i * Math.PI / 3);
-              const r = 30;
-              return `${BOARD_CENTER.x + r * Math.cos(angle)},${BOARD_CENTER.y - r * Math.sin(angle)}`;
-            }).join(' ')
-          }
-          fill="rgba(255,255,255,0.05)"
-          stroke="rgba(255,255,255,0.15)"
-          strokeWidth={1}
-        />
-        <text
-          x={BOARD_CENTER.x}
-          y={BOARD_CENTER.y + 1}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill="rgba(255,255,255,0.3)"
-          fontSize={16}
-          fontFamily="sans-serif"
-        >
-          🏆
-        </text>
-      </g>
-    );
-  };
+  // Compute outer hex for arm zone clipping
+  const armOuterHex = outerHex.map(v => `${v.x},${v.y}`).join(' ');
 
   return (
     <svg
       viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
       style={{
         width: '100%',
-        maxWidth: 600,
+        maxWidth: 580,
         height: 'auto',
-        filter: 'drop-shadow(0 4px 20px rgba(0,0,0,0.3))',
+        filter: 'drop-shadow(0 8px 40px rgba(0,0,0,0.6))',
       }}
     >
-      {/* Board background */}
-      <rect
-        x={0}
-        y={0}
-        width={BOARD_SIZE}
-        height={BOARD_SIZE}
-        rx={20}
-        fill="#1a1a2e"
-      />
+      {renderSVGFilters()}
 
-      {/* Board border */}
-      <rect
-        x={5}
-        y={5}
-        width={BOARD_SIZE - 10}
-        height={BOARD_SIZE - 10}
-        rx={18}
-        fill="none"
-        stroke="rgba(255,255,255,0.05)"
-        strokeWidth={1}
-      />
+      {/* Outer wood frame */}
+      {renderWoodFrame()}
 
-      {/* Outer hexagon ring */}
-      <polygon
-        points={
-          hexVertices.map(v => `${v.x},${v.y}`).join(' ')
-        }
-        fill="rgba(255,255,255,0.02)"
-        stroke="rgba(255,255,255,0.08)"
-        strokeWidth={1}
-      />
+      {/* Colored arm zones */}
+      <clipPath id="board-clip">
+        <polygon points={armOuterHex} />
+      </clipPath>
+      <g clipPath="url(#board-clip)">
+        {renderArmZones()}
+      </g>
 
-      {/* Center */}
+      {/* Outer hexagonal ring */}
+
+      {/* Center area */}
       {renderCenter()}
 
-      {/* Home stretches */}
+      {/* Home stretches (under track) */}
       {renderHomeStretches()}
 
       {/* Track cells */}
       {renderTrack()}
+
+      {/* Hexagon track ring border */}
+      <polygon
+        points={
+          getHexVertices(255).map(v => `${v.x},${v.y}`).join(' ')
+        }
+        fill="none"
+        stroke="#c4b99e"
+        strokeWidth={0.5}
+        opacity={0.3}
+      />
 
       {/* Home bases */}
       {renderHomeBases()}
@@ -508,20 +891,48 @@ export default function Board({
       {/* Tokens on track/home stretch */}
       {renderTokens()}
 
+      {/* Winner display */}
+      {players.find(p => p.finished && p.tokens.every(t => tokenIsFinished(t, players.indexOf(p)))) && (
+        <text
+          x={BOARD_CENTER.x}
+          y={BOARD_CENTER.y + 52}
+          textAnchor="middle"
+          fill="#d4a017"
+          fontSize={13}
+          fontWeight={800}
+          fontFamily="'Fredoka One', cursive"
+          opacity={0.9}
+        >
+          🏆 Winner!
+        </text>
+      )}
+
       {/* Turn indicator */}
       {players[currentPlayerIndex] && (
-        <text
-          x={BOARD_SIZE / 2}
-          y={BOARD_SIZE - 15}
-          textAnchor="middle"
-          fill={players[currentPlayerIndex].color || '#fff'}
-          fontSize={13}
-          fontWeight={700}
-          opacity={0.6}
-        >
-          {players[currentPlayerIndex].emoji} {players[currentPlayerIndex].name}'s Turn
-          {diceValue !== null && ` • Rolled: ${diceValue}`}
-        </text>
+        <g>
+          <rect
+            x={BOARD_CENTER.x - 170}
+            y={BOARD_SIZE - 32}
+            width={340}
+            height={24}
+            rx={12}
+            fill="rgba(0,0,0,0.06)"
+            stroke="rgba(0,0,0,0.08)"
+            strokeWidth={0.5}
+          />
+          <text
+            x={BOARD_CENTER.x}
+            y={BOARD_SIZE - 17}
+            textAnchor="middle"
+            fill={players[currentPlayerIndex].color}
+            fontSize={12}
+            fontWeight={800}
+            fontFamily="Nunito, sans-serif"
+          >
+            {players[currentPlayerIndex].emoji} {players[currentPlayerIndex].name}'s Turn
+            {diceValue !== null && ` • Rolled ${diceValue}`}
+          </text>
+        </g>
       )}
     </svg>
   );
