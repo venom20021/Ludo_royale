@@ -127,6 +127,15 @@ export default function PlayerPanel({
                     gap: 4,
                   }}>
                     {player.name}
+                    {player.isBot && <span style={{
+                      fontSize: 9,
+                      fontWeight: 800,
+                      color: '#a0a0ff',
+                      background: 'rgba(100,100,255,0.15)',
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      letterSpacing: 0.5,
+                    }}>🤖 BOT</span>}
                     {isMe && <span style={{
                       fontSize: 9,
                       fontWeight: 800,

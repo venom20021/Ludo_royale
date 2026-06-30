@@ -24,9 +24,16 @@ export default function Dice({
   useEffect(() => {
     if (rolling) {
       setIsAnimating(true);
+      // Use a more varied randomization pattern for the rolling animation
+      let lastValue = 1;
       const interval = setInterval(() => {
-        setAnimatingValue(Math.floor(Math.random() * 6) + 1);
-      }, 80);
+        let newValue;
+        do {
+          newValue = Math.floor(Math.random() * 6) + 1;
+        } while (newValue === lastValue); // Ensure it changes each frame
+        lastValue = newValue;
+        setAnimatingValue(newValue);
+      }, 60);
       setTimeout(() => {
         clearInterval(interval);
         setAnimatingValue(value || 1);

@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   TRACK_SIZE,
@@ -34,6 +34,37 @@ export default function Board({
   onTokenClick,
   selectableTokens,
 }) {
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [isHovered, setIsHovered] = useState(false);
+  const boardRef = useRef(null);
+
+  // 3D perspective tilt based on mouse position
+  const handleMouseMove = useCallback((e) => {
+    if (!boardRef.current) return;
+    const rect = boardRef.current.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width - 0.5;
+    const y = (e.clientY - rect.top) / rect.height - 0.5;
+    setMousePosition({ x, y });
+  }, []);
+
+  const perspectiveStyle = {
+    perspective: '1200px',
+    perspectiveOrigin: '50% 50%',
+  };
+
+  const tiltStyle = isHovered ? {
+    transition: 'transform 0.15s ease-out',
+    transform: `
+      rotateX(${mousePosition.y * -12}deg)
+      rotateY(${mousePosition.x * 12}deg)
+      translateZ(10px)
+    `,
+    transformStyle: 'preserve-3d',
+  } : {
+    transition: 'transform 0.6s ease-out',
+    transform: 'rotateX(4deg) rotateY(0deg) translateZ(0px)',
+    transformStyle: 'preserve-3d',
+  };
   const numSides = useMemo(() => getNumBoardSides(players.length), [players.length]);
   const trackCells = useMemo(() => getTrackCellPositions(numSides, 240), [numSides]);
   const polyVertices = useMemo(() => getPolygonVertices(numSides, 320), [numSides]);
@@ -337,6 +368,29 @@ export default function Board({
     return (
       <g>
         {/* Outer frame - dark glass */}
+        {/* Outer frame - dark glass with 3D bevel */}
+        <rect
+          x={-14}
+          y={-14}
+          width={BOARD_SIZE + 28}
+          height={BOARD_SIZE + 28}
+          rx={28}
+          fill="#0a0a1a"
+          stroke="rgba(100,100,150,0.08)"
+          strokeWidth={1.5}
+        />
+        {/* 3D bevel edge - light top */}
+        <rect
+          x={-12}
+          y={-12}
+          width={BOARD_SIZE + 24}
+          height={BOARD_SIZE + 24}
+          rx={26}
+          fill="none"
+          stroke="rgba(255,255,255,0.04)"
+          strokeWidth={1}
+        />
+        {/* 3D bevel edge - dark bottom */}
         <rect
           x={-10}
           y={-10}
@@ -344,8 +398,8 @@ export default function Board({
           height={BOARD_SIZE + 20}
           rx={24}
           fill="#12122a"
-          stroke="rgba(255,255,255,0.06)"
-          strokeWidth={2}
+          stroke="rgba(0,0,0,0.3)"
+          strokeWidth={1}
         />
         {/* Frame glow edge */}
         <rect
@@ -355,8 +409,19 @@ export default function Board({
           height={BOARD_SIZE + 12}
           rx={22}
           fill="none"
-          stroke="rgba(241,196,15,0.08)"
+          stroke="rgba(241,196,15,0.06)"
           strokeWidth={1}
+        />
+        {/* Specular highlight on top edge for 3D gloss */}
+        <rect
+          x={-8}
+          y={-8}
+          width={BOARD_SIZE + 16}
+          height={BOARD_SIZE + 16}
+          rx={26}
+          fill="none"
+          stroke="rgba(255,255,255,0.03)"
+          strokeWidth={0.5}
         />
         {/* Dark board surface with subtle radial gradient */}
         <rect
@@ -1009,15 +1074,57 @@ export default function Board({
   const outerPolyPoints = outerPoly.map(v => `${v.x},${v.y}`).join(' ');
 
   return (
-    <svg
-      viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+    <div
+      ref={boardRef}
       style={{
+        ...perspectiveStyle,
+        position: 'relative',
         width: '100%',
         maxWidth: 580,
-        height: 'auto',
-        filter: 'drop-shadow(0 8px 40px rgba(0,0,0,0.6))',
+        margin: '0 auto',
       }}
+      onMouseMove={handleMouseMove}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => { setIsHovered(false); setMousePosition({ x: 0, y: 0 }); }}
     >
+      {/* 3D shadow beneath the board */}
+      <div style={{
+        position: 'absolute',
+        bottom: '-8px',
+        left: '5%',
+        right: '5%',
+        height: '30px',
+        background: 'radial-gradient(ellipse at center, rgba(0,0,0,0.5) 0%, transparent 70%)',
+        filter: 'blur(12px)',
+        transform: 'translateZ(-20px)',
+        pointerEvents: 'none',
+      }} />
+
+      {/* 3D board edge (thickness) */}
+      <div style={{
+        position: 'absolute',
+        top: '4px',
+        left: '4px',
+        right: '4px',
+        bottom: '-8px',
+        borderRadius: '26px',
+        background: 'linear-gradient(180deg, rgba(10,10,26,0.9) 0%, rgba(5,5,15,0.95) 100%)',
+        border: '1px solid rgba(255,255,255,0.04)',
+        transform: 'translateZ(-8px)',
+        pointerEvents: 'none',
+      }} />
+
+      <svg
+        viewBox={`0 0 ${BOARD_SIZE} ${BOARD_SIZE}`}
+        style={{
+          width: '100%',
+          height: 'auto',
+          filter: 'drop-shadow(0 8px 40px rgba(0,0,0,0.6))',
+          ...tiltStyle,
+          position: 'relative',
+          zIndex: 2,
+        }}
+      >
       {renderSVGFilters()}
 
       {/* Board frame */}
@@ -1437,5 +1544,23 @@ export default function Board({
         </g>
       )}
     </svg>
+
+    {/* Ambient light reflection overlay for 3D gloss */}
+    <div style={{
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      borderRadius: '24px',
+      background: isHovered
+        ? `linear-gradient(${130 + mousePosition.x * 30}deg, rgba(255,255,255,0.03) 0%, transparent 50%, rgba(255,255,255,0.01) 100%)`
+        : 'linear-gradient(135deg, rgba(255,255,255,0.03) 0%, transparent 50%, rgba(0,0,0,0.02) 100%)',
+      pointerEvents: 'none',
+      zIndex: 3,
+      transform: 'translateZ(5px)',
+      transition: 'background 0.3s',
+    }} />
+    </div>
   );
 }

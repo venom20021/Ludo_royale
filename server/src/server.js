@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import GameManager from './GameManager.js';
+import { initializeRuflo, shutdownRuflo } from './BotAI.js';
 
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -35,28 +36,74 @@ const io = new Server(httpServer, {
 
 const gameManager = new GameManager();
 
-// Wire up turn timeout callback to emit Socket.IO events
+// ─── Event Emitters ────────────────────────────────────────────────
+
+function emitGameStateUpdate(roomId, action) {
+  const room = gameManager.getRoom(roomId);
+  if (!room) return;
+  io.to(roomId).emit('game_state_update', {
+    room: sanitizeRoom(room),
+    action: action || 'update',
+    currentPlayerIndex: room.gameState.currentPlayerIndex,
+  });
+}
+
+function emitGameOver(roomId) {
+  const room = gameManager.getRoom(roomId);
+  if (!room) return;
+  io.to(roomId).emit('game_over', {
+    room: sanitizeRoom(room),
+    winner: room.gameState.winner,
+  });
+}
+
+// After a game state update, check if the turn should pass to a bot
+function handlePostTurn(roomId) {
+  const room = gameManager.getRoom(roomId);
+  if (!room || room.phase !== 'playing') return;
+
+  const currentIdx = room.gameState.currentPlayerIndex;
+  const player = room.gameState.players[currentIdx];
+
+  if (player && player.isBot) {
+    // It's a bot's turn — schedule it (don't start human turn timer)
+    gameManager.scheduleBotTurn(roomId);
+  } else {
+    // It's a human's turn — start turn timer
+    gameManager.startTurnTimer(roomId);
+  }
+}
+
+// Wire up turn timeout callback
 gameManager.onTurnTimeout = (roomId) => {
+  emitGameStateUpdate(roomId, 'auto_skip');
+
+  const room = gameManager.getRoom(roomId);
+  if (room) {
+    if (room.phase === 'playing') {
+      handlePostTurn(roomId);
+    } else if (room.phase === 'finished') {
+      gameManager.clearTurnTimer(roomId);
+      emitGameOver(roomId);
+    }
+  }
+};
+
+// Wire up bot action callback
+gameManager.onBotAction = (roomId, actionType) => {
   const room = gameManager.getRoom(roomId);
   if (!room) return;
 
-  io.to(roomId).emit('game_state_update', {
-    room: sanitizeRoom(room),
-    action: room.gameState.phase === 'finished' ? 'auto_finish' : 'auto_skip',
-    currentPlayerIndex: room.gameState.currentPlayerIndex,
-  });
-
-  // If auto-skip advanced the turn, start a new timer
-  if (room.phase === 'playing') {
-    gameManager.startTurnTimer(roomId);
-  }
+  // Emit the game state update so clients see the bot's action
+  emitGameStateUpdate(roomId, actionType);
 
   if (room.phase === 'finished') {
+    gameManager.clearBotTimer(roomId);
     gameManager.clearTurnTimer(roomId);
-    io.to(roomId).emit('game_over', {
-      room: sanitizeRoom(room),
-      winner: room.gameState.winner,
-    });
+    emitGameOver(roomId);
+  } else if (room.phase === 'playing') {
+    // After bot action, handle next turn
+    handlePostTurn(roomId);
   }
 };
 
@@ -236,8 +283,8 @@ io.on('connection', (socket) => {
         room: sanitizeRoom(room),
       });
 
-      // Start turn timer
-      gameManager.startTurnTimer(roomId);
+      // Check if first player is a bot and schedule accordingly
+      handlePostTurn(roomId);
 
       console.log(`🎮 Game started in room ${roomId}`);
     } catch (err) {
@@ -268,10 +315,10 @@ io.on('connection', (socket) => {
         currentPlayerIndex: room.gameState.currentPlayerIndex,
       });
 
-      // Clear roll timer; start a new timer for the move phase (or next player's roll)
+      // Handle turn transition (bot or human)
       gameManager.clearTurnTimer(roomId);
       if (room.phase === 'playing') {
-        gameManager.startTurnTimer(roomId);
+        handlePostTurn(roomId);
       }
     } catch (err) {
       console.error('Error rolling dice:', err);
@@ -310,19 +357,17 @@ io.on('connection', (socket) => {
         },
       });
 
-      // Clear move timer; start new timer if turn advanced
+      // Handle turn transition (bot or human)
       gameManager.clearTurnTimer(roomId);
       if (room.phase === 'playing') {
-        gameManager.startTurnTimer(roomId);
+        handlePostTurn(roomId);
       }
 
       // If game finished, emit game_over
       if (room.phase === 'finished') {
         gameManager.clearTurnTimer(roomId);
-        io.to(roomId).emit('game_over', {
-          room: sanitizeRoom(room),
-          winner: room.gameState.winner,
-        });
+        gameManager.clearBotTimer(roomId);
+        emitGameOver(roomId);
       }
     } catch (err) {
       console.error('Error moving token:', err);
@@ -498,6 +543,7 @@ function sanitizeRoom(room) {
         finished: p.finished,
         finishOrder: p.finishOrder,
         connected: p.connected,
+        isBot: p.isBot || false,
       })),
       currentPlayerIndex: room.gameState.currentPlayerIndex,
       diceValue: room.gameState.diceValue,
@@ -513,14 +559,41 @@ function sanitizeRoom(room) {
   };
 }
 
-httpServer.listen(PORT, () => {
-  console.log(`
+// Initialize ruflo agent infrastructure, then start the server
+async function startServer() {
+  // Initialize ruflo agent system (non-blocking - falls back gracefully)
+  await initializeRuflo();
+
+  httpServer.listen(PORT, () => {
+    console.log(`
 ╔══════════════════════════════════════╗
 ║     🎲 Ludo Royale Server 🎲        ║
 ║──────────────────────────────────────║
 ║  Port: ${PORT}                        ║
 ║  WebSocket: socket.io                ║
 ║  Players: 6 per game                 ║
+║  AI Bots: ruflo agents               ║
 ╚══════════════════════════════════════╝
   `);
+  });
+}
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 SIGTERM received, shutting down...');
+  await shutdownRuflo();
+  httpServer.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('\n🛑 SIGINT received, shutting down...');
+  await shutdownRuflo();
+  httpServer.close();
+  process.exit(0);
+});
+
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });

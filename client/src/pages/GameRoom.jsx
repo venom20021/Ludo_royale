@@ -201,8 +201,8 @@ export default function GameRoom({ socket, onLeave }) {
                     <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm font-bold"
                       style={{ background: `${colors[i]}22`, border: `1px solid ${colors[i]}44` }}>
                       {emojis[i]}
-                    </div>
-                    <p className="text-sm font-bold text-white">{p.name}</p>
+                    </div>                     <p className="text-sm font-bold text-white">{p.name}</p>
+                     {p.isBot && <span className="text-[10px] font-bold text-indigo-300 bg-indigo-500/15 px-1.5 py-0.5 rounded">🤖 BOT</span>}
                   </div>
                   {p.connected !== false && (
                     <span className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_6px_rgba(46,204,113,0.6)]" />
@@ -331,6 +331,7 @@ export default function GameRoom({ socket, onLeave }) {
                 >
                   <span className="text-xs">{p.emoji}</span>
                   <span className="text-[10px] font-bold text-white truncate max-w-[40px]">{p.name}</span>
+                  {p.isBot && <span className="text-[8px] text-indigo-300 font-bold">🤖</span>}
                   <span className="text-[9px] text-white/40">🏆{finishedCount}/4</span>
                   {p.connected === false && <span className="text-[9px]">❌</span>}
                   {isCurrent && (

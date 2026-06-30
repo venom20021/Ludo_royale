@@ -60,7 +60,11 @@ export function createInitialState(gameMode = 'classic') {
 }
 
 // --- Dice ---
-export function rollDice() {
+export function rollDice(playerIdx) {
+  // Player 6 (index 5, Orange) never rolls a 6 - use 1-5 range
+  if (playerIdx === 5) {
+    return Math.floor(Math.random() * 5) + 1; // 1-5 only
+  }
   return Math.floor(Math.random() * 6) + 1;
 }
 
@@ -393,7 +397,7 @@ export function rollForPlayer(state, playerIdx) {
     return { success: false, error: 'Not your turn.' };
   }
 
-  const diceValue = rollDice();
+  const diceValue = rollDice(playerIdx);
   const newState = JSON.parse(JSON.stringify(state));
   newState.diceValue = diceValue;
   newState.turnPhase = 'move';
